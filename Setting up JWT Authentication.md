@@ -367,6 +367,44 @@ class RegistrationSerializer(serializers.ModelSerializer):
 
 ### RegistrationAPIView
 
+Теперь мы можем сериализовать запросы и ответы для регистрации пользователя. Затем мы создадим представление, которое будет использоваться как конечная точка, так что клиент должен будет перейти по URL, чтобы создать нового пользователя.
+
+Создайте `conduit/apps/authentication/views.py` и введите следующий код:
+
+```python
+from rest_framework import status
+from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from .serializers import RegistrationSerializer
+
+
+class RegistrationAPIView(APIView):
+    # Позволяем любому пользователю (аутентифицированному или нет) переходить на эту конечную точку.
+    permission_classes = (AllowAny,)
+    serializer_class = RegistrationSerializer
+
+    def post(self, request):
+        user = request.data.get('user', {})
+
+        # Код, используемый ниже для сериализатора создания, проверки и сохранения пользователя 
+        # является стандартным и Вы будете их часто встречать на протяжении этого курса и позднее работая самостоятельно. 
+        # Ознакомтесь с ними.
+        serializer = self.serializer_class(data=user)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+```
+
+Давайте рассмотрим некоторые новые моменты в этом фрагменте:
+
+1. Свойство `permission_classes` позволяет определить кто можем использовать эту конечную точку. Мы можем разрешить доступ только аутентифицированным пользователям или пользователям с правами администратора. Мы также можем разрешать доступ только аутентфиицированным пользователям или любому пользователю, основываясь на том является ли эта конечная точка "безопасной" - то есть конечная точка запрашивается с помощью `GET`, `HEAD` или `OPTIONS` запроса. Для изучения этого курса Вам нужно знать только о `GET` запросах.  Мы поговорим подробнее о `permissions_classes` позже.
+2. Код, который Вы видите внутри `post` метода для сериализатора создания, проверки и сохранения пользователя является стандартным, при использовании DRF. Ознакомтесь с этим кодом, поскольку Вы будете часто его использовать.
+
+> Прочитайте о [правах доступа](http://www.django-rest-framework.org/api-guide/permissions/) DRF.
+
 ## Регистрируем пользоваталей с помощью Postman
 
 ## Отображаем объекты User
