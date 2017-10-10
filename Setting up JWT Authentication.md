@@ -518,6 +518,75 @@ class RegistrationAPIView(APIView):
 
 ## LoginSerializer
 
+Откройте `conduit/apps/authentication/serializers.py` и добавьте следующий импорт в начало файла:
+
+```python
+from django.contrib.auth import authenticate
+```
+
+Затем создайте следующий сериализатор в этом же файле:
+
+```python
+class LoginSerializer(serializers.Serializer):
+    email = serializers.CharField(max_length=255)
+    username = serializers.CharField(max_length=255, read_only=True)
+    password = serializers.CharField(max_length=128, write_only=True)
+    token = serializers.CharField(max_length=255, read_only=True)
+
+    def validate(self, data):
+        # В методе `validate` происходит проверка "правильности" текущего экземпляра
+        # `LoginSerializer`. Для случая входа пользователя в систему, это означает,
+        # что он ввел адрес электронной почты и пароль и что введенная комбинация 
+        # соответствует одному из пользователей в нашей базе данных.
+        email = data.get('email', None)
+        password = data.get('password', None)
+
+        # Генерируем исключение, если 
+        # не был введен адрес электронной почты.
+        if email is None:
+            raise serializers.ValidationError(
+                'An email address is required to log in.'
+            )
+
+        # Генерируем исключение, если не был введен пароль.
+        if password is None:
+            raise serializers.ValidationError(
+                'A password is required to log in.'
+            )
+
+        # Метод `authenticate` - это метод, предоставляемый Django, который осуществляет проверку 
+        # правильности введенной комбинации адрес электронной почты/пароль. Заметьте, что Notice how
+        # мы передаём `email` как значение `username`, поскольку в нашей модели User
+        # в качестве `USERNAME_FIELD` мы использовали `email`.
+        user = authenticate(username=email, password=password)
+
+        # Если не было найдено ни одного пользователя соответствующего этой комбинации адрес электронной почты/пароль, то 
+        # метод `authenticate` возвратит `None`. В этом случае генерируем исключение.
+        if user is None:
+            raise serializers.ValidationError(
+                'A user with this email and password was not found.'
+            )
+
+        # Django предоставляет специальный флаг для нашей модели `User` - `is_active`. Он используется для того, 
+        # чтобы сообщить нам, что пользователь забанен или деактивирован. Такого почти никогда не будет происходить, 
+        # но всё равно этот флаг стоит проверять. Генерируем исключение в случае, если флаг не установлен.
+        if not user.is_active:
+            raise serializers.ValidationError(
+                'This user has been deactivated.'
+            )
+
+        # Метод `validate` должен возвращать словарь проверенных данных.
+        # Эти данные передаются методам `create` и `update`,
+        # которые будут показаны ниже.
+        return {
+            'email': user.email,
+            'username': user.username,
+            'token': user.token
+        }
+```
+
+После создания сериализатора можно переходить к созданию представления.
+
 ## LoginAPIView
 
 ## Осуществляем вход пользователя в систему с помощью Postman
