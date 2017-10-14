@@ -589,6 +589,52 @@ class LoginSerializer(serializers.Serializer):
 
 ## LoginAPIView
 
+Откройте `conduit/apps/authentication/views.py` и обновите следующую строку импорта:
+
+```python
+-from .serializers import RegistrationSerializer
++from .serializers import (
++    LoginSerializer, RegistrationSerializer
++)
+```
+
+Затем добавьте новое представление для входа в систему:
+
+```python
+class LoginAPIView(APIView):
+    permission_classes = (AllowAny,)
+    renderer_classes = (UserJSONRenderer,)
+    serializer_class = LoginSerializer
+
+    def post(self, request):
+        user = request.data.get('user', {})
+
+        # ОБратите внимание на то, что здесь мы не вызываем метод `serializer.save()`,
+        # как делали раньше при создании конечной точки для регистрации.
+        # Это связано с тем, что мы не хотим что-либо сохранять. Метод `validate` нашего 
+        # сериализатора делает всё что нам нужно для реализации входа в систему.        
+        serializer = self.serializer_class(data=user)
+        serializer.is_valid(raise_exception=True)
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
+```
+
+Откройте `conduit/apps/authentication/urls.py` и обновите следующую строку импорта:
+
+```python
+-from .views import RegistrationAPIView
++from .views import LoginAPIView, RegistrationAPIView
+```
+
+Добавьте новое правило в список `urlpatterns`:
+
+```python
+urlpatterns = [
+    url(r'^users/?$', RegistrationAPIView.as_view()),
++    url(r'^users/login/?$', LoginAPIView.as_view()),
+]
+```
+
 ## Осуществляем вход пользователя в систему с помощью Postman
 
 ## Изменяем параметры EXCEPTION_HANDLER и NON_FIELD_ERRORS_KEY
