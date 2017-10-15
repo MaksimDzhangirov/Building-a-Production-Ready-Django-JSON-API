@@ -637,6 +637,14 @@ urlpatterns = [
 
 ## Осуществляем вход пользователя в систему с помощью Postman
 
+На данный момент, пользователь может войти в систему, перейдя по адресу новой конечной точки для входа в систему. Давайте проверим это. Откройте Postman и используйте запрос Login, чтобы войти в систему под одним из пользователей, которого Вы создали ранее. Если попытка входа была успешной, то в ответ будет добавлен токен, который может использоваться в дальнейшем при выполнении запросов, требующих аутентификации пользователя.
+
+Здесь нам нужно учесть кое-что ещё. Попробуйте использовать запрос Login с неправильной комбинацией адрес электронной почты/пароль. ОБратите внимание на выдаваемую ошибку. Здесь существует две проблемы.
+
+Прежде всего, `non_field_errors` звучит странно. Обычно это означает что какое-либо из полей в сериализаторе не прошло валидацию. Поскольку мы переопределили метод `validate` вместо того, чтобы использовать конкретный метод, например, `validate_email`, Django REST фреймворк не может определить в каком поле возникла ошибка. По умолчанию выдаётся `non_field_errors` и поскольку наш клиент будет использовать этот ответ при возникновении ошибок, мы изменим его, выдавая `error`.
+
+Во-вторых, клиент ожидает, что любые ошибки должны выдаваться в пространсвте имен `errors` в JSON ответе, подобно тому как мы создали пространство имен `user` для запросов входа в систему и регистрации. Мы сделаем это, переопределив используемую по умолчанию обработку ошибок в Django REST фреймворке.
+
 ## Изменяем параметры EXCEPTION_HANDLER и NON_FIELD_ERRORS_KEY
 
 ## Обновляем UserJSONRenderer
@@ -646,6 +654,82 @@ urlpatterns = [
 ## UserSerializer
 
 ## UserRetrieveUpdateAPIView
+
+Откройте `conduit/apps/authentication/views.py` и обновите импорты следующим образом:
+
+```python
+from rest_framework import status
++from rest_framework.generics import RetrieveUpdateAPIView
+-from rest_framework.permissions import AllowAny
++from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from .renderers import UserJSONRenderer
+from .serializers import (
+-   LoginSerializer, RegistraitonSerializer
++    LoginSerializer, RegistrationSerializer, UserSerializer,
+)
+```
+
+Ниже этих импортов создайте новое представление с названием `UserRetrieveUpdateAPIView`:
+
+```python
+class UserRetrieveUpdateAPIView(RetrieveUpdateAPIView):
+    permission_classes = (IsAuthenticated,)
+    renderer_classes = (UserJSONRenderer,)
+    serializer_class = UserSerializer
+
+    def retrieve(self, request, *args, **kwargs):
+        # В этом методе мы не хотим ничего проверять или сохранять.
+        # Вместо этого мы просто хотим, чтобы сериализатор преобразовал наш объект 
+        # в JSON и послал клиенту.        
+        serializer = self.serializer_class(request.user)
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def update(self, request, *args, **kwargs):
+        serializer_data = request.data.get('user', {})
+
+        # Вот где используется последовательность сериализации, 
+        # проверки, сохранения, о которой мы говорили ранее.
+        serializer = self.serializer_class(
+            request.user, data=serializer_data, partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
+```
+
+Теперь перейдите в `conduit/apps/authentication/urls.py` и обновите импорты, добавив `UserRetrieveUpdateAPIView`:
+
+```python
+-from .views import LoginAPIView, RegistrationAPIView
++from .views import (
++    LoginAPIView, RegistrationAPIView, UserRetrieveUpdateAPIView
++)
+```
+
+И добавьте новый маршрут в `urlpatterns`:
+
+```python
+urlpatterns = [
++    url(r'^user/?$', UserRetrieveUpdateAPIView.as_view()),
+    url(r'^users/?$', RegistrationAPIView.as_view()),
+    url(r'^users/login/?$', LoginAPIView.as_view()),
+]
+```
+
+Опять откройте Postman и отправьте запрос "Current User". Вы увидите ошибку, которая выглядит следующим образом:
+
+```python
+{
+  "user": {
+    "detail": "Authentication credentials were not provided."
+  }
+}
+```
 
 ## Аутентифицируем пользователей
 
