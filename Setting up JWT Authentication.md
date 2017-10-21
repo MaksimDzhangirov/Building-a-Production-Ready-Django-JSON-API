@@ -700,7 +700,47 @@ REST_FRAMEWORK = {
 
 ## Обновляем UserJSONRenderer
 
+Ой! Все равно мы не смогли добиться того чего хотели. Теперь мы получаем ключ `errors`, но он находится в пространстве имен `user`. Это необходимо исправить.
+
+Давайте обновим `UserJSONRenderer` и будем проверять наличие ключа `errors`, осуществляя выдачу информации по-другому в случае его наличия. Откройте `conduit/apps/authentication/renderers.py` и внесите в него следующие изменения:
+
+```python
+class UserJSONRenderer(JSONRenderer):
+    charset = 'utf-8'
+
+    def render(self, data, media_type=None, renderer_context=None):
++        # Если представление генерирует ошибку (например пользователь не может быть аутентифицирован
++        # или подобную, `data` будут содержать ключ `errors`. Мы хотим, чтобы используемый 
++        # по уолчанию JSONRenderer обрабатывал ошибки, поэтому необходимо 
++        # проверить наличие этого ключа в `data`.
++        errors = data.get('errors', None)
+
+        # If we receive a `token` key in the response, it will be a
+        # byte object. Byte objects don't serializer well, so we need to
+        # decode it before rendering the User object.
+        token = data.get('token', None)
+
++        if errors is not None:
++            # Как было сказано ранее, мы хотим, чтобы используемый по умолчанию
++            # JSONRenderer обрабатывал ошибки.
++            return super(UserJSONRenderer, self).render(data)
+
+        if token is not None and isinstance(token, bytes):
+            # We will decode `token` if it is of type
+            # bytes.
+            data['token'] = token.decode('utf-8')
+
+        # Finally, we can render our data under the "user" namespace.
+        return json.dumps({
+            'user': data
+        })
+```
+
+Теперь ещё раз отправьте запрос для входа в систему. В этот раз всё должно пройти нормально и ответ от сервера должен содержать ключ `errors` вместо `users`.
+
 ## Получаем и обновляем информацию о пользователях
+
+Пользователи могут регистрировать новые учетные записи и входить в систему под этими записями. Теперь нужен способ с помощью которого они могли бы получать и обновлять свою информацию. Давайте реализуем его прежде чем перейдём к созданию профилей пользователей.
 
 ## UserSerializer
 
