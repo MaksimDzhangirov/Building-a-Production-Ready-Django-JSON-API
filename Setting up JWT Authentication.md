@@ -843,30 +843,28 @@ class JWTAuthentication(authentication.BaseAuthentication):
 
     def authenticate(self, request):
         """
-        The `authenticate` method is called on every request regardless of
-        whether the endpoint requires authentication. 
+        Метод `authenticate` вызывается для каждого запроса независимо от того требует
+        ли конечная точка, чтобы пользователь был аутентифицирован.        
 
-        `authenticate` has two possible return values:
+        Метод `authenticate` может вернуть один из двух ответов:
 
-        1) `None` - We return `None` if we do not wish to authenticate. Usually
-                    this means we know authentication will fail. An example of
-                    this is when the request does not include a token in the
-                    headers.
+        1) `None` - Мы возвращаем `None`, если не хотим осуществлять аутентификацию. 
+                    Обычно это означает, что мы знаем, что аутентифицировать пользователя
+                    не удастся. Например, в заголовках запроса отсутствует токен.
 
-        2) `(user, token)` - We return a user/token combination when 
-                             authentication is successful.
+        2) `(user, token)` - Мы возвращаем комбинацию пользователь/токен, когда аутентификация 
+                             прошла успешно.
 
-                            If neither case is met, that means there's an error 
-                            and we do not return anything.
-                            We simple raise the `AuthenticationFailed` 
-                            exception and let Django REST Framework
-                            handle the rest.
+                            Если ни один из случаев не выполняется - это означает, 
+                            что возникла ошибка и мы ничего не возвращаем.
+                            Мы просто генерируем исключение `AuthenticationFailed` 
+                            и позволяем Django REST фреймворку обработать его.                            
         """
         request.user = None
 
-        # `auth_header` should be an array with two elements: 1) the name of
-        # the authentication header (in this case, "Token") and 2) the JWT 
-        # that we should authenticate against.
+        # `auth_header` всегда должен быть массивом с двумя элементами: 1) названием 
+        # заголовка аутентификации (в этом случае, "Token") и 2) JWT, который
+        # мы должны использовать для аутентификации.
         auth_header = authentication.get_authorization_header(request).split()
         auth_header_prefix = self.authentication_header_prefix.lower()
 
@@ -874,51 +872,54 @@ class JWTAuthentication(authentication.BaseAuthentication):
             return None
 
         if len(auth_header) == 1:
-            # Invalid token header. No credentials provided. Do not attempt to
-            # authenticate.
+            # Неправильный заголовок токена. Учетные данные не были предоставлены. Даже не пытаемся 
+            # осуществлять аутентификацию.
             return None
 
         elif len(auth_header) > 2:
-            # Invalid token header. The Token string should not contain spaces. Do
-            # not attempt to authenticate.
+            # Неправильный заголовок токена. Строка Token не может содержать пробелы. Даже не пытаемся 
+            # осуществлять аутентификацию.
             return None
 
-        # The JWT library we're using can't handle the `byte` type, which is
-        # commonly used by standard libraries in Python 3. To get around this,
-        # we simply have to decode `prefix` and `token`. This does not make for
-        # clean code, but it is a good decision because we would get an error
-        # if we didn't decode these values.
+        # Библиотека JWT, которую мы используем, не может работать с типом `byte`, который 
+        # часто используется стандартными библиотеками в Python 3. Чтобы решить эту проблему,
+        # мы просто должны декодировать `prefix` и `token`. Это не делает код более чистым, но 
+        # является хорошим решением, поскольку мы получим ошибку
+        # если не декодируем эти значения.
         prefix = auth_header[0].decode('utf-8')
         token = auth_header[1].decode('utf-8')
 
         if prefix.lower() != auth_header_prefix:
-            # The auth header prefix is not what we expected. Do not attempt to
-            # authenticate.
+            # Префикс заголовка аутентификации не такой как мы ожидали. Даже не пытаемся 
+            # осуществлять аутентификацию.
             return None
 
-        # By now, we are sure there is a *chance* that authentication will
-        # succeed. We delegate the actual credentials authentication to the
-        # method below.
+        # Дойдя до этого места в коде, мы можем быть уверены, что существует ненулевая вероятность успешной 
+        # аутентификации. Мы поручаем провести аутентификацию, используя предоставленные учетные данные,  
+        # методу, приведенному ниже.
         return self._authenticate_credentials(request, token)
 
     def _authenticate_credentials(self, request, token):
         """
-        Try to authenticate the given credentials. If authentication is
-        successful, return the user and token. If not, throw an error.
+        Пытаемся осуществить аутентификацию, используя заданные учетные данные. Если аутентификация прошла успешно, 
+        возвращаем пользователя и токен. Если нет, то генерируем ошибку.
         """
         try:
             payload = jwt.decode(token, settings.SECRET_KEY)
         except:
+            # Ошибка при аутентификации. Невозможно декодировать токен.
             msg = 'Invalid authentication. Could not decode token.'
             raise exceptions.AuthenticationFailed(msg)
 
         try:
             user = User.objects.get(pk=payload['id'])
         except User.DoesNotExist:
+            # Не найдено ни одного пользователя, соответствующего этому токену.
             msg = 'No user matching this token was found.'
             raise exceptions.AuthenticationFailed(msg)
 
         if not user.is_active:
+            # Учетная запись этого пользователя была деактивирована.
             msg = 'This user has been deactivated.'
             raise exceptions.AuthenticationFailed(msg)
 
@@ -946,6 +947,10 @@ REST_FRAMEWORK = {
 ```
 
 ## Осуществляем получение и обновление информации о пользователях с помощью Postman
+
+Теперь, когда мы настроили наш новый бекэнд для аутентификации, ошибка аутентификации, которую мы видели ранее, должна пропасть. Проверьте это, открыв Postman и отправив ещё один запрос "Current User". Запрос должен успешно осуществиться и Вы должны увидеть информацию о пользователе в ответе.
+
+Помните, что мы создали конечную точку для обновления данных вместе с конечной точкой для их получения. Давайте проверим её тоже. Пошлите запрос "Update User" из каталога "Auth" Postman. Если Вы не изменяли тело запроса, то электронная почта Вашего пользователя должна была измениться. Поэкспериментируйте с этими запросами, внося различные изменения в информацию о пользователе.
 
 ## Переходим к более интересным темам
 
