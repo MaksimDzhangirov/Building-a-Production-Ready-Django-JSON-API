@@ -12,7 +12,163 @@
 
 ## Создание модели Profile
 
+Создайте `conduit/apps/profiles/models.py` и добавьте следующий код:
+
+```python
+from django.db import models
+
+class Profile(models.Model):
+    # Существует непосредственная связь между моделью Profile и
+    # User. Создавая связь один-к-одному между ними, мы формализуем эту связь.
+    # Каждый пользователь будет иметь одну и только одну связанную с ним модель Profile.
+    user = models.OneToOneField(
+        'authentication.User', on_delete=models.CASCADE
+    )
+
+    # У каждого профиля пользователя будет поле, с помощью  other users
+    # которого они могут рассказать что-то о себе. Это поле будет пустым в
+    # момент создания пользователем своей учетной записи, поэтому 
+    # мы укажем это следующим образом blank=True.
+    bio = models.TextField(blank=True)
+
+    # Кроме поля `bio`, каждый пользовател может загрузить картинку для профиля или
+    # аватар. Это поле не будет обязательным и может быть пустым.
+    image = models.URLField(blank=True)
+
+    # Временная метка, указывающая, когда был создан этот объект.
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    # Временная метка, указывающая, когда был в последний раз обновлен этот объект.
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.user.username
+```
+
+Вы наверное заметили, что и модель User, и Profile содержат поля. Эти поля будут использоваться во всех нащих моделях, поэтому почему бы не потратить несколько минут и перенести их в свою собственную модель?
+
 ## Модель для временных меток
+
+Создайте `conduit/apps/core/models.py` и добавьте следующий фрагмент кода:
+
+```python
+from django.db import models
+
+class TimestampedModel(models.Model):
+    # Временная метка, показывающая, когда был создан этот объект.
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    # Временная метка, показывающая, когда был в последний раз обновлен этот объект.
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        abstract = True
+
+        # По умолчанию, любая модель, которая наследуется от `TimestampedModel`
+        # должна быть упорядочена в обратном хронологическом порядке. Мы можем переопределить это 
+        # для каждой модели в случае необходимости, но обратный хронологический
+        #  порядок хороший выбор по умолчанию для большинства моделей.
+        ordering = ['-created_at', '-updated_at’]
+```
+А теперь измените `conduit/apps/profiles/models.py` следующим образом:
+
+```python
+from django.db import models
+
++from conduit.apps.core.models import TimestampedModel
+
+
+-class Profile(models.Model):
++class Profile(TimestampedModel):
+    # Как было сказано выше, существует непосредственная связь между моделью Profile и
+    # User. Создавая связь один-к-одному между ними, мы формализуем эту связь.
+    # Каждый пользователь будет иметь одну и только одну связанную с ним модель Profile.
+    user = models.OneToOneField(
+        'authentication.User', on_delete=models.CASCADE
+    )
+
+    # У каждого профиля пользователя будет поле, с помощью  other users
+    # которого они могут рассказать что-то о себе. Это поле будет пустым в
+    # момент создания пользователем своей учетной записи, поэтому 
+    # мы укажем это следующим образом `blank=True`.
+    bio = models.TextField(blank=True)
+
+    # Кроме поля `bio`, каждый пользовател может загрузить картинку для профиля или
+    # аватар. Это поле не будет обязательным и может быть пустым.
+    image = models.URLField(blank=True)
+
+-    # Временная метка, указывающая, когда был создан этот объект.
+-    created_at = models.DateTimeField(auto_now_add=True)
+-
+-    # Временная метка, указывающая, когда был в последний раз обновлен этот объект.
+-    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.user.username
+```
+Поскольку мы хотим также использовать модель для временных меток в модели `User`, нам нужно сделать пару изменений в ней.
+
+Откройте `conduit/apps/authentication/models.py` и внесите следующие изменения:
+
+```python
+import jwt
+
+from datetime import datetime, timedelta
+
+from django.conf import settings
+from django.contrib.auth.models import (
+    AbstractBaseUser, BaseUserManager, PermissionsMixin
+)
+from django.db import models
+
++from conduit.apps.core.models import TimestampedModel
+
+# …
+
+-class User(AbstractBaseUser, PermissionsMixin):
++class User(AbstractBaseUser, PermissionsMixin, TimestampedModel):
+    # У каждого `User` должен быть уникальный человеко-понятный идентификатор,
+    # который мы можем использовать для представления `User` в UI. Мы хотим
+    # проиндексировать этот столбец в базе данных для ускорения поиска. 
+    username = models.CharField(db_index=True, max_length=255, unique=True)
+
+    # Нам также нужно каким-то образом связываться с пользователем
+    # и способ идентификации пользователя при входе в систему. Поскольку нам в
+    # любом случае необходим адрес электронной почты для связи с пользователем, 
+    # мы будем также использовать email для входа в систему, поскольку он 
+    # наиболее часто используется в качестве логина на момент написания учебного 
+    # пособия.
+    email = models.EmailField(db_index=True, unique=True)
+
+    # Когда пользователь больше не захочет использовать нашу платформу,     
+    # он может захотеть удалить свою учетную запись. Для нас это будет проблемой, 
+    # поскольку собранные о пользователе данные ценны для нас и мы не хотим удалять их. 
+    # Мы просто предложим пользователям отключить их учетную запись вместо её удаления.
+    # Таким образом, они больше не будут отображаться на сайте, но мы сможем продолжать
+    # анализировать собранные данные.   
+    is_active = models.BooleanField(default=True)
+
+    # Флаг `is_staff` используется Django, чтобы определить кто может, 
+    # а кто - нет входить в систему администрирования Django. Для большинства пользователей
+    # значение этого флага всегда будет равно false.
+    is_staff = models.BooleanField(default=False)
+
+-    # Временная метка, показывающая когда был создан этот объект.
+-    created_at = models.DateTimeField(auto_now_add=True)
+-
+-    # Временная метка, показывающая, когда в последний раз обновлялся этот объект.
+-    updated_at = models.DateTimeField(auto_now=True)
+
+    # При использовании нестандартной, пользовательской модели пользователя необходимо
+    # определить дополнительные поля, требуемые Django.
+
+    # Свойство `USERNAME_FIELD` указывает какое поле будет использоваться для входа в систему.
+    # Здесь мы хотим использовать поле email.
+    USERNAME_FIELD = 'email'
+    REQUIRED_FIELDS = ['username']
+
+        # …
+```
 
 ## Отношение один-к-одному и использование сигнального фреймворка Django
 
