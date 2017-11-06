@@ -172,9 +172,82 @@ from django.db import models
 
 ## Отношение один-к-одному и использование сигнального фреймворка Django
 
+В модели `Profile` мы создали отношение один-к-одному между `User` и `Profile`. Было бы неплохо, если бы этого было бы достаточно и мы могли бы на этом закончить, но нам все равно необходимо сообщить Django, что мы хотим создавать `Profile` каждый раз, когда мы создаём `User`.
+
+Для этого мы будем использовать [сигнальный](https://docs.djangoproject.com/en/1.9/topics/signals/) фреймворк Django. А именно, мы будем использовать сигнал [post_save](https://docs.djangoproject.com/en/1.9/ref/signals/#django.db.models.signals.post_save), чтобы создать экземпляр модели `Profile` после экземпляра модели `User`.
+
+Начнём открыв `conduit/apps/authentication/signals.py` и добавив в файл следующий код:
+
+```python
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+
+from conduit.apps.profiles.models import Profile
+
+from .models import User
+
+@receiver(post_save, sender=User)
+def create_related_profile(sender, instance, created, *args, **kwargs):
+    # Обратите внимание, что здесь мы проверяем поле `created`. Мы делаем это только 
+    # при создании экземляра `User`. Если метод save, вызвавший этот сигнал,
+    # был запущен при обновлении экземпляра модели, то очевидно, что у пользователя
+    # уже есть профиль.
+    if instance and created:
+        instance.profile = Profile.objects.create(user=instance)
+```
+Это сигнал, который создаст объект профиля, но Django не будет запускать его по умолчанию. Вместо этого нам необходимо создать свой пользовательский класс `AppConfig` для приложения `authentication` и зарегистрировать его в Django.
+
+Откройте `conduit/apps/authentication/__init__.py` и добавьте следующий код:
+
+```python
+from django.apps import AppConfig
+
+
+class AuthenticationAppConfig(AppConfig):
+    name = 'conduit.apps.authentication'
+    label = 'authentication'
+    verbose_name = 'Authentication'
+
+    def ready(self):
+        import conduit.apps.authentication.signals
+
+# Вот как мы регистрируем свою, пользовательскую конфигурацию приложения в Django. Django достаточно умён, 
+# чтобы найти свойство `default_app_config` для каждого зарегистрированного приложения и 
+# и использовать правильную конфигурацию приложения на основе этого значения.
+default_app_config = 'conduit.apps.authentication.AuthenticationAppConfig'
+```
+
+Теперь после создания нового пользователя для этого пользователя должен создаваться профиль. Давайте протестируем это, чтобы убедиться, что всё работает правильно.
+
 ## Тестируем created_related_profile
 
 ## Сериализуем объекты Profile
+
+Создайте `conduit/apps/profiles/serializers.py` со следующим содержимым:
+
+```python
+from rest_framework import serializers
+
+from .models import Profile
+
+class ProfileSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source='user.username')
+    bio = serializers.CharField(allow_blank=True, required=False)
+    image = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Profile
+        fields = ('username', 'bio', 'image',)
+        read_only_fields = ('username',)
+
+    def get_image(self, obj):
+        if obj.image:
+            return obj.image
+
+        return 'https://static.productionready.io/images/smiley-cyrus.jpg'
+```
+
+В этом фрагменте кода нет ничего, чего бы мы не рассматривали ранее. Сериализатор очень похож на `UserSerializer`, который мы создали в прошлой главе. Можно переходить к следующему разделу.
 
 ## Отображаем объекты Profile
 
