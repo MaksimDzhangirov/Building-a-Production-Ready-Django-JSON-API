@@ -255,11 +255,46 @@ class ProfileSerializer(serializers.ModelSerializer):
 
 ## ProfileDoesNotExist
 
-## Получаем объект с помощью Postman
+## Получаем профиль с помощью Postman
+
+Если вы откроете Postman и загляните в каталог "Profiles", то увидите там запрос под названием "Profile."  Пошлите запрос на сервер, чтобы проверить, что всё что мы сделали до этого работает. Предполагая, что всё прошло хорошо, мы можем двигаться дальше и обновить представление `UserRetrieveUpdateAPIView`.
 
 ## Обновляем UserRetrieveUpdateAPIView
 
+Откройте `conduit/apps/authentication/views.py` и добавьте следующие изменения в метод `update`:
+
+```python
+def update(self, request, *args, **kwargs):
+-    serializer_data = request.data.get('user', {})
++    user_data = request.data.get('user', {})
++
++    serializer_data = {
++        ’username': user_data.get('username', request.user.username),
++        ’email': user_data.get('email', request.user.email),
++
++        ’profile': {
++            ’bio': user_data.get('bio', request.user.profile.bio),
++            ’image': user_data.get('image', request.user.profile.image)
++        }
++    }
+
+    # Вот где используется последовательность сериализации, 
+    # проверки, сохранения, о которой мы говорили ранее.
+    serializer = self.serializer_class(
+        request.user, data=serializer_data, partial=True
+    )
+    serializer.is_valid(raise_exception=True)
+    serializer.save()
+
+    return Response(serializer.data, status=status.HTTP_200_OK)
+```
+
+Эти изменения позволят нам использовать одну и ту же конечную точку для обновления электронной почты, пароля, биографии и аватара пользователя.
+
+Нам также необходимо обновить `UserSerializer`, чтобы метод `update` работал с профилями.
+
 ## Обновляем UserSerializer
+
 
 ## Что будем делать дальше?
 
