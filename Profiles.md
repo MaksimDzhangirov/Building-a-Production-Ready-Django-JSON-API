@@ -295,6 +295,97 @@ def update(self, request, *args, **kwargs):
 
 ## Обновляем UserSerializer
 
+Откройте `conduit/apps/authentication/serializers.py` и обновите импорты следующим образом:
+
+```python
+from django.contrib.auth import authenticate
+
+from rest_framework import serializers
+
++from conduit.apps.profiles.serializers import ProfileSerializer
++from .models import User
+```
+
+Затем мы можем обновить `UserSerializer` следующим образом:
+
+```python
+class UserSerializer(serializers.ModelSerializer):
+    Handles serialization and deserialization of User objects."""
+
+    # Длина пароля должна быть не менее 8 символов, но не более 128 
+    # символов. Эти значения по умолчанию заданы в Django. Мы могли бы изменить их, но это бы
+    # дополнительных усилий, не давая никаких преимуществ, поэтому давайте будем использовать
+    # значения по умолчанию.
+    password = serializers.CharField(
+        max_length=128,
+        min_length=8,
+        write_only=True
+    )
++
++    # Когда поле должно обрабатываться как сериализатор, мы должны явно указать это.
++    # Кроме того, `UserSerializer` никогда не должен выдавать информацию о профиле,
++    # поэтому мы установим свойство `write_only=True`.
++    profile = ProfileSerializer(write_only=True)
++
++    # Мы хотим получить поля `bio` и `image` из соответствующей модели 
++    # Profile.
++    bio = serializers.CharField(source='profile.bio', read_only=True)
++    image = serializers.CharField(source='profile.image', read_only=True)
+
+    class Meta:
+        model = User
+-        fields = (‘email’, ‘username’, ‘password’, ‘token’,)
++        fields = (
++            'email', 'username', 'password', 'token', 'profile', 'bio',
++            'image',
++        )
+
+    # …
+```
+
+Наконец изменим метод `update` `UserSerializer`, добавив обработку данных профиля.
+
+```python
+def update(self, instance, validated_data):
+    """Метод осуществляет обновление модели User."""
+
+    # Для паролей не должен использоваться метод `setattr`, в отличие от других полей.
+    # Это связано с тем, что Django предоставляет функцию, которая осуществляет хэширование  
+    # и добавление солей к паролям, что важно для безопасности приложения. Это означает, что мы должны
+    # удалить поле password из словаря `validated_data`, прежде чем обработать данные, хранящиеся в нём.    
+    password = validated_data.pop('password', None)
+
++    # Как и пароли, мы должны обрабатывать профили отдельно от других полей. Для этого
++    # мы удаляем данные профиля из словаря `validated_data`.
++    profile_data = validated_data.pop('profile', {})
++
+    for (key, value) in validated_data.items():
+        # Для ключей, оставшихся в `validated_data`, мы присвоим их значения атрибутам 
+        # текущего экземпляра `User`.
+        setattr(instance, key, value)
+
+    if password is not None:
+        # Метод `.set_password()` был упомянут выше. Он осуществляет все необходимые операции 
+        # для безопасного сохранения пароля, освобождая нас от необходимости заниматься этим.
+        instance.set_password(password)
+
+    # Наконец, после обновления всех полей, мы должны явно сохранить 
+    # модель. Стоит отметить, что метод `.set_password()` не сохраняет
+    # модель.
+    instance.save()
+
++    for (key, value) in profile_data.items():
++        # Мы делаем то же чамое, что делили выше, но в этот раз мы вносим
++        # изменения в модель Profile.
++        setattr(instance.profile, key, value)
++
++    # Сохраняем профиль так же как до этого сохранили пользователя.
++    instance.profile.save()
++
+    return instance
+```
+
+Со всеми этими изменениями мы готовы предоставить наш новый функционал - профили - нашим пользователям! Для проверки его работоспособности, вернитесь в Postman и осуществите запросы "Current User" и "Update User" в каталоге "Auth", чтобы убедиться, что мы ничего не нарушили во время рефакторинга.
 
 ## Что будем делать дальше?
 
