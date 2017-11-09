@@ -715,9 +715,9 @@ class UserJSONRenderer(JSONRenderer):
 +        # проверить наличие этого ключа в `data`.
 +        errors = data.get('errors', None)
 
-        # If we receive a `token` key in the response, it will be a
-        # byte object. Byte objects don't serializer well, so we need to
-        # decode it before rendering the User object.
+        # Если был передан ключ `token` в запросе, то он будет байтовым объектом.
+        # Байтовые объекты плохо сериализуются, поэтому нам надо его декодировать
+        # прежде чем выдавать объект User.
         token = data.get('token', None)
 
 +        if errors is not None:
@@ -726,11 +726,11 @@ class UserJSONRenderer(JSONRenderer):
 +            return super(UserJSONRenderer, self).render(data)
 
         if token is not None and isinstance(token, bytes):
-            # We will decode `token` if it is of type
-            # bytes.
+            # Как было сказано выше, мы декодируем `token` только в том случае,
+            # если он является байтовым объектом.
             data['token'] = token.decode('utf-8')
 
-        # Finally, we can render our data under the "user" namespace.
+        # Наконец мы можем выдать наши данные в пространстве имен "user".
         return json.dumps({
             'user': data
         })
@@ -752,10 +752,10 @@ class UserJSONRenderer(JSONRenderer):
 class UserSerializer(serializers.ModelSerializer):
     """Класс осуществляет сериализацию и десериализацию объектов User."""
 
-    # Passwords must be at least 8 characters, but no more than 128 
-    # characters. These values are the default provided by Django. We could
-    # change them, but that would create extra work while introducing no real
-    # benefit, so lets just stick with the defaults.
+    # Длина пароля должна быть не менее 8 символов, но не более 128 
+    # символов. Эти значения по умолчанию заданы в Django. Мы могли бы изменить их, но это бы
+    # дополнительных усилий, не давая никаких преимуществ, поэтому давайте будем использовать
+    # значения по умолчанию.
     password = serializers.CharField(
         max_length=128,
         min_length=8,
@@ -766,39 +766,37 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = ('email', 'username', 'password', 'token',)
 
-        # The `read_only_fields` option is an alternative for explicitly
-        # specifying the field with `read_only=True` like we did for password
-        # above. The reason we want to use `read_only_fields` here is that
-        # we don't need to specify anything else about the field. The
-        # password field needed the `min_length` and 
-        # `max_length` properties, but that isn't the case for the token
-        # field.
+        # Свойство `read_only_fields` - это альтернатива явного указания атрибута 
+        # `read_only=True` для поля как мы делали выше для пароля.
+        # Причина, по которой мы хотим использовать `read_only_fields` здесь заключается в том,
+        # что нам не нужно указывать какие-либо дополнительные атрибуты для поля. 
+        # Полю password нужны были атрибуты `min_length` и
+        # `max_length`, в отличие от поля token.
         read_only_fields = ('token',)
 
 
     def update(self, instance, validated_data):
-        """Performs an update on a User."""
+        """Осуществляет обновление модели User."""
 
-        # Passwords should not be handled with `setattr`, unlike other fields.
-        # Django provides a function that handles hashing and
-        # salting passwords. That means
-        # we need to remove the password field from the
-        # `validated_data` dictionary before iterating over it.
+        # Для паролей не должен использоваться метод `setattr`, в отличие от других полей.
+        # Это связано с тем, что Django предоставляет функцию, которая осуществляет хэширование  
+        # и добавление солей к паролям, что важно для безопасности приложения. Это означает, что мы должны
+        # удалить поле password из словаря `validated_data`, прежде чем обработать данные, хранящиеся в нём.  
         password = validated_data.pop('password', None)
 
         for (key, value) in validated_data.items():
-            # For the keys remaining in `validated_data`, we will set them on
-            # the current `User` instance one at a time.
+            # Для ключей, оставшихся в `validated_data`, мы присвоим их значения атрибутам 
+            # текущего экземпляра `User`.
             setattr(instance, key, value)
 
         if password is not None:
-            # `.set_password()`  handles all
-            # of the security stuff that we shouldn't be concerned with.
+            # Метод `.set_password()` осуществляет все необходимые операции 
+            # для безопасного сохранения пароля, освобождая нас от необходимости заниматься этим.
             instance.set_password(password)
-
-        # After everything has been updated we must explicitly save
-        # the model. It's worth pointing out that `.set_password()` does not
-        # save the model.
+            
+        # После обновления всех полей, мы должны явно сохранить 
+        # модель. Стоит отметить, что метод `.set_password()` не сохраняет
+        # модель.
         instance.save()
 
         return instance
