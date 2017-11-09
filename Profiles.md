@@ -221,6 +221,42 @@ default_app_config = 'conduit.apps.authentication.AuthenticationAppConfig'
 
 ## Тестируем created_related_profile
 
+Первое, что нам нужно сделать - это удалить нашу существующую базу данных. Ни у одного из наших пользователей нет профиля, поэтому Django попросит ввести значение по умолчанию. Проблема заключается в том, что вводить значение по умолчанию нужно будет для каждой новой записи, которую мы создадим в будущем, чего мы конечно не хотим.
+
+Чтобы удалить базу данных, удалите файл `db.sqlite3` в корневом каталоге Вашего проекта.
+
+После этого мы хотим создать новые миграции для приложения `profiles`. Поскольку мы делаем это в первый раз для `profiles`, нам надо явно указать, что эти миграции относятся к приложению `profiles`.
+
+```
+~ python manage.py makemigrations profiles
+```
+
+> ЗАМЕЧАНИЕ: В приведенном выше фрагменте не нужно вводить символ ~ вместе с остальной командой. Мы использовали его, чтобы указать, что эту команду нужно запускать из командной строки.
+
+После создания новых миграций запустите следующую команду, чтобы применить новые миграции и создать новую базу данных:
+
+```
+~ python manage.py migrate
+```
+
+Теперь Вы можете использовать Postman для отправки запроса на регистрацию и создания нового пользователя с профилем. Давайте отправим этот запрос прямо сейчас.
+
+Теперь нам нужно проверить, что профиль был успешно создан. Выполните следующую команду из командной строки, чтобы открыть новую оболочку:
+
+```
+~ python manage.py shell_plus
+```
+
+Внутри оболочки все что нам нужно сделать - это извлечь пользователя, которого мы только что создали, и убедиться, что у него есть профиль:
+
+```
+>>> u = User.objects.first()
+>>> u.profile
+<Profile: james>
+```
+
+Результат выполнения команды `u.profile` будет отличаться именем созданного Вами пользователя. Если `u.profile` возвращает экземпляр модели `Profile`, то можно переходить к следующему разделу.
+ 
 ## Сериализуем объекты Profile
 
 Создайте `conduit/apps/profiles/serializers.py` со следующим содержимым:
@@ -252,6 +288,43 @@ class ProfileSerializer(serializers.ModelSerializer):
 ## Отображаем объекты Profile
 
 ## ProfileRetrieveAPIView
+
+Давайте добавим конечную точку для получения информации о конкретном пользователе.
+
+```python
+from rest_framework import status
+from rest_framework.generics import RetrieveAPIView
+from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
+
+from .models import Profile
+from .renderers import ProfileJSONRenderer
+from .serializers import ProfileSerializer
+
+
+class ProfileRetrieveAPIView(RetrieveAPIView):
+    permission_classes = (AllowAny,)
+    renderer_classes = (ProfileJSONRenderer,)
+    serializer_class = ProfileSerializer
+
+    def retrieve(self, request, username, *args, **kwargs):
+        # Пытаемся извлечь запрошенный профиль и генерируем исключение, если 
+        # профиль не найден.
+        try:
+            # Мы используем метод `select_related`, чтобы избежать ненужных запросов к 
+            # базе данных.
+            profile = Profile.objects.select_related('user').get(
+                user__username=username
+            )
+        except Profile.DoesNotExist:
+            raise
+
+        serializer = self.serializer_class(profile)
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
+```
+
+В вышеприведенном коде мы учитываем случай, когда запрошенного профиля не существует, но делаем это не совсем верно. В частности, мы никак не контролируем сообщение об ошибке, которое получит клиент. Давайте пыпытаемся исправить этот недочёт. 
 
 ## ProfileDoesNotExist
 
