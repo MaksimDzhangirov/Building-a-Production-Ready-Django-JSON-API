@@ -287,6 +287,102 @@ class ProfileSerializer(serializers.ModelSerializer):
 
 ## Отображаем объекты Profile
 
+Поскольку мы знаем, что столкнемся с той же проблемой, которая у нас уже была, когда данные о пользователе выдавались не в пространстве имен "user", давайте не будем медлить и создадим `ProfileJSONRenderer`. Этот формирователь ответа от сервера будет очень похож на `UserJSONRenderer`, поэтому мы создадим `ConduitJSONRenderer`, от которого могут наследоваться как `UserJSONRenderer`, так и `ProfileJSONRenderer`. Это позволит нам абстрагировать некоторые части кода и избежать их дублирования.
+
+Добавьте следующее в `conduit/apps/core/renderers.py`:
+
+```python
+import json
+
+from rest_framework.renderers import JSONRenderer
+
+
+class ConduitJSONRenderer(JSONRenderer):
+    charset = 'utf-8'
+    object_label = 'object'
+
+    def render(self, data, media_type=None, renderer_context=None):
+        # Если представление генерирует ошибку (например, пользователь не может быть аутентифицирован)
+        # `data` будет содержать ключ `errors`. Мы хотим, чтобы 
+        # используемый по умолчанию JSONRenderer обрабатывал ошибки, поэтому нам нужно
+        # проверить этот случай.
+        errors = data.get('errors', None)
+
+        if errors is not None:
+            # Как было сказано выше, мы позволяем используемому по умолчанию JSONRenderer
+            # обрабатывать ошибки.
+            return super(ConduitJSONRenderer, self).render(data)
+
+        return json.dumps({
+            self.object_label: data
+        })
+```
+
+Существует два отличия между `ConduitJSONRenderer` и `UserJSONRenderer`, которые мы создали:
+
+1. В `UserJSONRenderer` мы не указывали свойство `object_label`. Причина заключалась в том, что мы знали, что объектом для `UserJSONRenderer` будет `user`. В этом случае объект (или пространство имен) будет меняться в зависимости от того какой класс будет наследоваться от `ConduitJSONRenderer`. Поэтому мы позволяем задавать свойство `object_label` динамически и по молчанию принимаем его равным `object`.
+
+2. `UserJSONRenderer` нужно осуществлять декодирование JWT, если он является частью запроса. Это декодирование нужно осуществлять только в `UserJSONRenderer` и оно не будет использоваться в каком-либо другом формирователе ответа от сервера. Не имеет смысла добавлять его в `ConduitJSONRenderer`. Скоро мы обновим `UserJSONRenderer`, чтобы учесть эту особенность.
+
+Теперь добавьте следующее в `conduit/apps/profiles/renderers.py`:
+
+```python
+from conduit.apps.core.renderers import ConduitJSONRenderer
+
+
+class ProfileJSONRenderer(ConduitJSONRenderer):
+    object_label = 'profile'
+```
+
+В этом фрагменте кода нет ничего нового, поскольку `ProfileJSONRenderer` не отличается по своему функционалу от `UserJSONRenderer`.
+
+Откройте `conduit/apps/authentication/renderers.py` и внесите следующие изменения:
+
+```python
+-import json
+-
+-from rest_framework.renderers import JSONRenderer
++from conduit.apps.core.renderers import ConduitJSONRenderer
+
+
+-class UserJSONRenderer(JSONRenderer):
++class UserJSONRenderer(ConduitJSONRenderer):
+-    charset = 'utf-8'
++    object_label = ‘user’
+
+    def render(self, data, media_type=None, renderer_context=None):
+-        # Если представление генерирует ошибку (например пользователь не может быть аутентифицирован
+-        # или подобную), `data` будут содержать ключ `errors`. Мы хотим, чтобы используемый
+-        # по умолчанию JSONRenderer обрабатывал ошибки, поэтому необходимо
+-        # проверить наличие этого ключа в `data`.
+-        errors = data.get('errors', None)
+-
+        # Если был передан ключ `token` в запросе, то он будет байтовым объектом.
+        # Байтовые объекты плохо сериализуются, поэтому нам надо его декодировать
+        # прежде чем выдавать объект User.
+        token = data.get('token', None)
+
+-        if errors is not None:
+-            # As mentioned above, we will let the default JSONRenderer handle
+-            # rendering errors.
+-            return super(UserJSONRenderer, self).render(data)
+
+        if token is not None and isinstance(token, bytes):
+            # Как было сказано выше, мы декодируем `token` только в том случае,
+            # если он является байтовым объектом.
+            data['token'] = token.decode('utf-8')
+
+-        # Наконец мы можем выдать наши данные в пространстве имен "user".
+-        return json.dumps({
+-            'user': data
+-        })
++        return super(UserJSONRenderer, self).render(data)
+```
+
+В основном всё что мы сделали здесь - это удалили те части, которые теперь находятся в `ConduitJSONRenderer`.
+
+Для `UserJSONRenderer` всё должно работать точно так же как работало ранее. Чтобы проверить это, выполните запрос "Current User" в Postman.
+
 ## ProfileRetrieveAPIView
 
 Давайте добавим конечную точку для получения информации о конкретном пользователе.
