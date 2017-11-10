@@ -711,7 +711,7 @@ class UserJSONRenderer(JSONRenderer):
     def render(self, data, media_type=None, renderer_context=None):
 +        # Если представление генерирует ошибку (например пользователь не может быть аутентифицирован
 +        # или подобную, `data` будут содержать ключ `errors`. Мы хотим, чтобы используемый 
-+        # по уолчанию JSONRenderer обрабатывал ошибки, поэтому необходимо 
++        # по умолчанию JSONRenderer обрабатывал ошибки, поэтому необходимо 
 +        # проверить наличие этого ключа в `data`.
 +        errors = data.get('errors', None)
 
