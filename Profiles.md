@@ -420,9 +420,114 @@ class ProfileRetrieveAPIView(RetrieveAPIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 ```
 
-В вышеприведенном коде мы учитываем случай, когда запрошенного профиля не существует, но делаем это не совсем верно. В частности, мы никак не контролируем сообщение об ошибке, которое получит клиент. Давайте пыпытаемся исправить этот недочёт. 
+В вышеприведенном коде мы учитываем случай, когда запрошенного профиля не существует, но делаем это не совсем верно. В частности, мы никак не контролируем сообщение об ошибке, которое получит клиент. Давайте попытаемся исправить этот недочёт. 
 
 ## ProfileDoesNotExist
+
+Создайте файл с названием `conduit/apps/profiles/exceptions.py` и добавьте в него следующий код:
+
+```python
+from rest_framework.exceptions import APIException
+
+
+class ProfileDoesNotExist(APIException):
+    status_code = 400
+    default_detail = 'The requested profile does not exist.'
+```
+
+Это простое исключение. В Django REST фреймворк каждый раз, когда Вы хотите создать своё собственное, пользовательское исключение Вы наследуете его от `APIException`. Всё что Вам нужно сделать затем - это указать свойства `default_detail` и `status_code`. Параметры по умолчанию для этого исключения можно переопределить для каждого конкретного случая, если Вы посчитаете, что так стоит сделать.
+
+Внесите следующие изменения в функцию `core_exception_handler` из файла `conduit/apps/core/exceptions.py`:
+
+```python
+def core_exception_handler(exc, context):
+    # Если возникает исключение, которое мы здесь явно не обрабатываем, мы хотим,
+    # поручить его обработку стандартному DRF обработчику. Если мы хотим обработать данный тип исключения,
+    # то нам всё равно нужен доступ к ответу, генерируемому DRF,
+    # поэтому в первую очередь необходимо получить его.
+    response = exception_handler(exc, context)
+    handlers = {
++        'ProfileDoesNotExist': _handle_generic_error,
+        'ValidationError': _handle_generic_error
+    }
+    # В строке кода после этого комментария видно как мы определяем
+    # тип текущего исключения. Затем мы используем его, чтобы понять должны ли мы обрабатывать это
+    # исключение или можно позволить Django REST фреймворку сделать это за нас.    
+    exception_class = exc.__class__.__name__
+
+    if exception_class in handlers:
+        # Если это исключение одно из тех, что мы хотим обрабатывать, то обрабатываем его. В противном случае,
+        # возвращаем ответ, сгенерированный ранее стандартным обработчиком исключений.
+        return handlers[exception_class](exc, context, response)
+
+    return response
+```
+
+Мы будем обрабатывать наше пользовательское исключение так же, как и `ValidationError`, но теперь мы можем корректировать информацию об  ошибке, которую увидит клиент. Не останавливаясь на полпути, добавим `ProfileDoesNotExist`  в наше представление.
+
+Откройте `conduit/apps/profiles/views.py` и добавьте следующие изменение:
+
+```python
+from rest_framework import status
+from rest_framework.generics import RetrieveAPIView
+from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
+
++from .exceptions import ProfileDoesNotExist
+from .models import Profile
+from .renderers import ProfileJSONRenderer
+from .serializers import ProfileSerializer
+
+
+class ProfileRetrieveAPIView(RetrieveAPIView):
+    permission_classes = (AllowAny,)
+    renderer_classes = (ProfileJSONRenderer,)
+    serializer_class = ProfileSerializer
+
+    def retrieve(self, request, username, *args, **kwargs):
+        # Пытаемся извлечь запрошенный профиль и генерируем ошибку, если
+        # профиль не может быть найден.
+        try:
+            # Мы используем метод `select_related`, чтобы избежать ненужных
+            # запросов к базе данных.
+            profile = Profile.objects.select_related('user').get(
+                user__username=username
+            )
+        except Profile.DoesNotExist:
+-            raise
++            raise ProfileDoesNotExist
+
+        serializer = self.serializer_class(profile)
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
+```
+
+Проблема решена! Давайте добавим url-адрес для `ProfileRetrieveAPIView` в наш файл urls.py.
+
+Создайте `conduit/apps/profiles/urls.py` со следующим содержимым:
+
+```python
+from django.conf.urls import url
+
+from .views import ProfileRetrieveAPIView
+
+urlpatterns = [
+    url(r'^profiles/(?P<username>\w+)/?$', ProfileRetrieveAPIView.as_view()),
+]
+```
+
+Как и в случае с `conduit/apps/authentication/urls.py` нам надо зарегистрировать этот новый файл с url  в переменной `urlpatterns` из файла `conduit/urls.py`.
+
+Откройте `conduit/urls.py` и внесите следующее изменение:
+
+```python
+urlpatterns = [
+    url(r'^admin/', admin.site.urls),
+
+    url(r'^api/', include('conduit.apps.authentication.urls', namespace='authentication')),
++    url(r'^api/', include('conduit.apps.profiles.urls', namespace='profiles')),
+]
+```
 
 ## Получаем профиль с помощью Postman
 
