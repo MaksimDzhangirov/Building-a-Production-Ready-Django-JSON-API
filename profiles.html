@@ -1,0 +1,554 @@
+<h1 id="-">Профили пользователей</h1>
+<p>В конце прошлой главы мы кратко коснулись различия между пользователя и их профилями, но я хотел бы немного подробнее разобрать эту тему, прежде чем мы начнём работать с профилями.</p>
+<p>При разработке программного обеспечения существует такое понятие как [Принцип Единой Ответственности] (<a href="https://en.wikipedia.org/wiki/Single_responsibility_principle">https://en.wikipedia.org/wiki/Single_responsibility_principle</a>). Идея заключается в том, что каждый класс должен делать что-то одно, но делать это очень хорошо. Как Принцип Единой Ответственности связан с нашей темой? Он является причиной, из-за которой мы разделяем пользователей и их профили.</p>
+<p>Мы используем модель пользователя для аутентификации и авторизации (прав доступа). Задача модели <code>User</code> заключается в том, чтобы убедиться, что пользователю разрешен доступ к тем ресурсам, которые они хотят получить. Например, пользователю может быть разрешено редактировать свою электронную почту и пароль. Но в то же время у них не должно быть возможности изменить электронную почту и пароль другого пользователя.</p>
+<p>Наоборот, модель <code>Profile</code> предназначена для отображения информации о пользователе в пользовательском интерфейсе. В нашем клиенте будет страница с профилем для каждого пользователя откуда и происходит название модели <code>Profile</code>. Сейчас мы перенесём кое-что из модели пользователя, поскольку существует непосредственная связь между моделями &quot;Профиль&quot; и &quot;Пользователь&quot; и наша цель свести дублирующуюся информацию в них к минимуму.</p>
+<p>Теперь мы готовы к созданию модели <code>Profile</code>.</p>
+<h2 id="-profile">Создание модели Profile</h2>
+<p>Создайте <code>conduit/apps/profiles/models.py</code> и добавьте следующий код:</p>
+<pre><code class="lang-python"><span class="hljs-keyword">from</span> django.db <span class="hljs-keyword">import</span> models
+
+<span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">Profile</span><span class="hljs-params">(models.Model)</span>:</span>
+    <span class="hljs-comment"># Существует непосредственная связь между моделью Profile и</span>
+    <span class="hljs-comment"># User. Создавая связь один-к-одному между ними, мы формализуем эту связь.</span>
+    <span class="hljs-comment"># Каждый пользователь будет иметь одну и только одну связанную с ним модель Profile.</span>
+    user = models.OneToOneField(
+        <span class="hljs-string">'authentication.User'</span>, on_delete=models.CASCADE
+    )
+
+    <span class="hljs-comment"># У каждого профиля пользователя будет поле, с помощью  other users</span>
+    <span class="hljs-comment"># которого они могут рассказать что-то о себе. Это поле будет пустым в</span>
+    <span class="hljs-comment"># момент создания пользователем своей учетной записи, поэтому </span>
+    <span class="hljs-comment"># мы укажем это следующим образом blank=True.</span>
+    bio = models.TextField(blank=<span class="hljs-keyword">True</span>)
+
+    <span class="hljs-comment"># Кроме поля `bio`, каждый пользовател может загрузить картинку для профиля или</span>
+    <span class="hljs-comment"># аватар. Это поле не будет обязательным и может быть пустым.</span>
+    image = models.URLField(blank=<span class="hljs-keyword">True</span>)
+
+    <span class="hljs-comment"># Временная метка, указывающая, когда был создан этот объект.</span>
+    created_at = models.DateTimeField(auto_now_add=<span class="hljs-keyword">True</span>)
+
+    <span class="hljs-comment"># Временная метка, указывающая, когда был в последний раз обновлен этот объект.</span>
+    updated_at = models.DateTimeField(auto_now=<span class="hljs-keyword">True</span>)
+
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">__str__</span><span class="hljs-params">(self)</span>:</span>
+        <span class="hljs-keyword">return</span> self.user.username
+</code></pre>
+<p>Вы наверное заметили, что и модель User, и Profile содержат поля. Эти поля будут использоваться во всех нащих моделях, поэтому почему бы не потратить несколько минут и перенести их в свою собственную модель?</p>
+<h2 id="-">Модель для временных меток</h2>
+<p>Создайте <code>conduit/apps/core/models.py</code> и добавьте следующий фрагмент кода:</p>
+<pre><code class="lang-python"><span class="hljs-keyword">from</span> django.db <span class="hljs-keyword">import</span> models
+
+<span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">TimestampedModel</span><span class="hljs-params">(models.Model)</span>:</span>
+    <span class="hljs-comment"># Временная метка, показывающая, когда был создан этот объект.</span>
+    created_at = models.DateTimeField(auto_now_add=<span class="hljs-keyword">True</span>)
+
+    <span class="hljs-comment"># Временная метка, показывающая, когда был в последний раз обновлен этот объект.</span>
+    updated_at = models.DateTimeField(auto_now=<span class="hljs-keyword">True</span>)
+
+    <span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">Meta</span>:</span>
+        abstract = <span class="hljs-keyword">True</span>
+
+        <span class="hljs-comment"># По умолчанию, любая модель, которая наследуется от `TimestampedModel`</span>
+        <span class="hljs-comment"># должна быть упорядочена в обратном хронологическом порядке. Мы можем переопределить это </span>
+        <span class="hljs-comment"># для каждой модели в случае необходимости, но обратный хронологический</span>
+        <span class="hljs-comment">#  порядок хороший выбор по умолчанию для большинства моделей.</span>
+        ordering = [<span class="hljs-string">'-created_at'</span>, <span class="hljs-string">'-updated_at’]</span>
+</code></pre>
+<p>А теперь измените <code>conduit/apps/profiles/models.py</code> следующим образом:</p>
+<pre><code class="lang-python"><span class="hljs-keyword">from</span> django.db <span class="hljs-keyword">import</span> models
+
++<span class="hljs-keyword">from</span> conduit.apps.core.models <span class="hljs-keyword">import</span> TimestampedModel
+
+
+-<span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">Profile</span><span class="hljs-params">(models.Model)</span>:</span>
++<span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">Profile</span><span class="hljs-params">(TimestampedModel)</span>:</span>
+    <span class="hljs-comment"># Как было сказано выше, существует непосредственная связь между моделью Profile и</span>
+    <span class="hljs-comment"># User. Создавая связь один-к-одному между ними, мы формализуем эту связь.</span>
+    <span class="hljs-comment"># Каждый пользователь будет иметь одну и только одну связанную с ним модель Profile.</span>
+    user = models.OneToOneField(
+        <span class="hljs-string">'authentication.User'</span>, on_delete=models.CASCADE
+    )
+
+    <span class="hljs-comment"># У каждого профиля пользователя будет поле, с помощью  other users</span>
+    <span class="hljs-comment"># которого они могут рассказать что-то о себе. Это поле будет пустым в</span>
+    <span class="hljs-comment"># момент создания пользователем своей учетной записи, поэтому </span>
+    <span class="hljs-comment"># мы укажем это следующим образом `blank=True`.</span>
+    bio = models.TextField(blank=<span class="hljs-keyword">True</span>)
+
+    <span class="hljs-comment"># Кроме поля `bio`, каждый пользовател может загрузить картинку для профиля или</span>
+    <span class="hljs-comment"># аватар. Это поле не будет обязательным и может быть пустым.</span>
+    image = models.URLField(blank=<span class="hljs-keyword">True</span>)
+
+-    <span class="hljs-comment"># Временная метка, указывающая, когда был создан этот объект.</span>
+-    created_at = models.DateTimeField(auto_now_add=<span class="hljs-keyword">True</span>)
+-
+-    <span class="hljs-comment"># Временная метка, указывающая, когда был в последний раз обновлен этот объект.</span>
+-    updated_at = models.DateTimeField(auto_now=<span class="hljs-keyword">True</span>)
+
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">__str__</span><span class="hljs-params">(self)</span>:</span>
+        <span class="hljs-keyword">return</span> self.user.username
+</code></pre>
+<p>Поскольку мы хотим также использовать модель для временных меток в модели <code>User</code>, нам нужно сделать пару изменений в ней.</p>
+<p>Откройте <code>conduit/apps/authentication/models.py</code> и внесите следующие изменения:</p>
+<pre><code class="lang-python"><span class="hljs-keyword">import</span> jwt
+
+<span class="hljs-keyword">from</span> datetime <span class="hljs-keyword">import</span> datetime, timedelta
+
+<span class="hljs-keyword">from</span> django.conf <span class="hljs-keyword">import</span> settings
+<span class="hljs-keyword">from</span> django.contrib.auth.models <span class="hljs-keyword">import</span> (
+    AbstractBaseUser, BaseUserManager, PermissionsMixin
+)
+<span class="hljs-keyword">from</span> django.db <span class="hljs-keyword">import</span> models
+
++<span class="hljs-keyword">from</span> conduit.apps.core.models <span class="hljs-keyword">import</span> TimestampedModel
+
+# …
+
+-<span class="hljs-keyword">class</span> User(AbstractBaseUser, PermissionsMixin):
++<span class="hljs-keyword">class</span> User(AbstractBaseUser, PermissionsMixin, TimestampedModel):
+    # У каждого `User` должен быть уникальный человеко-понятный идентификатор,
+    # который мы можем использовать для представления `User` в UI. Мы хотим
+    # проиндексировать этот столбец в базе данных для ускорения поиска. 
+    username = models.CharField(db_index=<span class="hljs-literal">True</span>, max_length=<span class="hljs-number">255</span>, unique=<span class="hljs-literal">True</span>)
+
+    # Нам также нужно каким-то образом связываться с пользователем
+    # и способ идентификации пользователя при входе в систему. Поскольку нам в
+    # любом случае необходим адрес электронной почты для связи с пользователем, 
+    # мы будем также использовать email для входа в систему, поскольку он 
+    # наиболее часто используется в качестве логина на момент написания учебного 
+    # пособия.
+    email = models.EmailField(db_index=<span class="hljs-literal">True</span>, unique=<span class="hljs-literal">True</span>)
+
+    # Когда пользователь больше не захочет использовать нашу платформу,     
+    # он может захотеть удалить свою учетную запись. Для нас это будет проблемой, 
+    # поскольку собранные о пользователе данные ценны для нас и мы не хотим удалять их. 
+    # Мы просто предложим пользователям отключить их учетную запись вместо её удаления.
+    # Таким образом, они больше не будут отображаться на сайте, но мы сможем продолжать
+    # анализировать собранные данные.   
+    is_active = models.BooleanField(default=<span class="hljs-literal">True</span>)
+
+    # Флаг `is_staff` используется Django, чтобы определить кто может, 
+    # а кто - нет входить в систему администрирования Django. Для большинства пользователей
+    # значение этого флага всегда будет равно false.
+    is_staff = models.BooleanField(default=<span class="hljs-literal">False</span>)
+
+-    # Временная метка, показывающая когда был создан этот объект.
+-    created_at = models.DateTimeField(auto_now_add=<span class="hljs-literal">True</span>)
+-
+-    # Временная метка, показывающая, когда в последний раз обновлялся этот объект.
+-    updated_at = models.DateTimeField(auto_now=<span class="hljs-literal">True</span>)
+
+    # При использовании нестандартной, пользовательской модели пользователя необходимо
+    # определить дополнительные поля, требуемые Django.
+
+    # Свойство `USERNAME_FIELD` указывает какое поле будет использоваться для входа в систему.
+    # Здесь мы хотим использовать поле email.
+    USERNAME_FIELD = <span class="hljs-string">'email'</span>
+    REQUIRED_FIELDS = [<span class="hljs-string">'username'</span>]
+
+        # …
+</code></pre>
+<h2 id="-django">Отношение один-к-одному и использование сигнального фреймворка Django</h2>
+<p>В модели <code>Profile</code> мы создали отношение один-к-одному между <code>User</code> и <code>Profile</code>. Было бы неплохо, если бы этого было бы достаточно и мы могли бы на этом закончить, но нам все равно необходимо сообщить Django, что мы хотим создавать <code>Profile</code> каждый раз, когда мы создаём <code>User</code>.</p>
+<p>Для этого мы будем использовать <a href="https://docs.djangoproject.com/en/1.9/topics/signals/">сигнальный</a> фреймворк Django. А именно, мы будем использовать сигнал <a href="https://docs.djangoproject.com/en/1.9/ref/signals/#django.db.models.signals.post_save">post_save</a>, чтобы создать экземпляр модели <code>Profile</code> после экземпляра модели <code>User</code>.</p>
+<p>Начнём открыв <code>conduit/apps/authentication/signals.py</code> и добавив в файл следующий код:</p>
+<pre><code class="lang-python"><span class="hljs-keyword">from</span> django.db.models.signals <span class="hljs-keyword">import</span> post_save
+<span class="hljs-keyword">from</span> django.dispatch <span class="hljs-keyword">import</span> receiver
+
+<span class="hljs-keyword">from</span> conduit.apps.profiles.models <span class="hljs-keyword">import</span> Profile
+
+<span class="hljs-keyword">from</span> .models <span class="hljs-keyword">import</span> User
+
+@receiver(post_save, sender=User)
+def create_related_profile(sender, <span class="hljs-keyword">instance</span>, created, *args, **kwargs):
+    # Обратите внимание, что здесь мы проверяем поле `created`. Мы делаем это только 
+    # при создании экземляра `User`. Если метод save, вызвавший этот сигнал,
+    # был запущен при обновлении экземпляра модели, то очевидно, что у пользователя
+    # уже есть профиль.
+    <span class="hljs-keyword">if</span> <span class="hljs-keyword">instance</span> and created:
+        <span class="hljs-keyword">instance</span>.profile = Profile.objects.create(user=<span class="hljs-keyword">instance</span>)
+</code></pre>
+<p>Это сигнал, который создаст объект профиля, но Django не будет запускать его по умолчанию. Вместо этого нам необходимо создать свой пользовательский класс <code>AppConfig</code> для приложения <code>authentication</code> и зарегистрировать его в Django.</p>
+<p>Откройте <code>conduit/apps/authentication/__init__.py</code> и добавьте следующий код:</p>
+<pre><code class="lang-python"><span class="hljs-keyword">from</span> django.apps <span class="hljs-keyword">import</span> AppConfig
+
+
+<span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">AuthenticationAppConfig</span><span class="hljs-params">(AppConfig)</span>:</span>
+    name = <span class="hljs-string">'conduit.apps.authentication'</span>
+    label = <span class="hljs-string">'authentication'</span>
+    verbose_name = <span class="hljs-string">'Authentication'</span>
+
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">ready</span><span class="hljs-params">(self)</span>:</span>
+        <span class="hljs-keyword">import</span> conduit.apps.authentication.signals
+
+<span class="hljs-comment"># Вот как мы регистрируем свою, пользовательскую конфигурацию приложения в Django. Django достаточно умён, </span>
+<span class="hljs-comment"># чтобы найти свойство `default_app_config` для каждого зарегистрированного приложения и </span>
+<span class="hljs-comment"># и использовать правильную конфигурацию приложения на основе этого значения.</span>
+default_app_config = <span class="hljs-string">'conduit.apps.authentication.AuthenticationAppConfig'</span>
+</code></pre>
+<p>Теперь после создания нового пользователя для этого пользователя должен создаваться профиль. Давайте протестируем это, чтобы убедиться, что всё работает правильно.</p>
+<h2 id="-created_related_profile">Тестируем created_related_profile</h2>
+<p>Первое, что нам нужно сделать - это удалить нашу существующую базу данных. Ни у одного из наших пользователей нет профиля, поэтому Django попросит ввести значение по умолчанию. Проблема заключается в том, что вводить значение по умолчанию нужно будет для каждой новой записи, которую мы создадим в будущем, чего мы конечно не хотим.</p>
+<p>Чтобы удалить базу данных, удалите файл <code>db.sqlite3</code> в корневом каталоге Вашего проекта.</p>
+<p>После этого мы хотим создать новые миграции для приложения <code>profiles</code>. Поскольку мы делаем это в первый раз для <code>profiles</code>, нам надо явно указать, что эти миграции относятся к приложению <code>profiles</code>.</p>
+<pre><code>~ python manage<span class="hljs-selector-class">.py</span> makemigrations profiles
+</code></pre><blockquote>
+<p>ЗАМЕЧАНИЕ: В приведенном выше фрагменте не нужно вводить символ ~ вместе с остальной командой. Мы использовали его, чтобы указать, что эту команду нужно запускать из командной строки.</p>
+</blockquote>
+<p>После создания новых миграций запустите следующую команду, чтобы применить новые миграции и создать новую базу данных:</p>
+<pre><code>~ python manage<span class="hljs-selector-class">.py</span> migrate
+</code></pre><p>Теперь Вы можете использовать Postman для отправки запроса на регистрацию и создания нового пользователя с профилем. Давайте отправим этот запрос прямо сейчас.</p>
+<p>Теперь нам нужно проверить, что профиль был успешно создан. Выполните следующую команду из командной строки, чтобы открыть новую оболочку:</p>
+<pre><code>~ python manage<span class="hljs-selector-class">.py</span> shell_plus
+</code></pre><p>Внутри оболочки все что нам нужно сделать - это извлечь пользователя, которого мы только что создали, и убедиться, что у него есть профиль:</p>
+<pre><code>&gt;&gt;&gt; u = User<span class="hljs-selector-class">.objects</span><span class="hljs-selector-class">.first</span>()
+&gt;&gt;&gt; u<span class="hljs-selector-class">.profile</span>
+&lt;Profile: james&gt;
+</code></pre><p>Результат выполнения команды <code>u.profile</code> будет отличаться именем созданного Вами пользователя. Если <code>u.profile</code> возвращает экземпляр модели <code>Profile</code>, то можно переходить к следующему разделу.</p>
+<h2 id="-profile">Сериализуем объекты Profile</h2>
+<p>Создайте <code>conduit/apps/profiles/serializers.py</code> со следующим содержимым:</p>
+<pre><code class="lang-python"><span class="hljs-keyword">from</span> rest_framework <span class="hljs-keyword">import</span> serializers
+
+<span class="hljs-keyword">from</span> .models <span class="hljs-keyword">import</span> Profile
+
+<span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">ProfileSerializer</span><span class="hljs-params">(serializers.ModelSerializer)</span>:</span>
+    username = serializers.CharField(source=<span class="hljs-string">'user.username'</span>)
+    bio = serializers.CharField(allow_blank=<span class="hljs-keyword">True</span>, required=<span class="hljs-keyword">False</span>)
+    image = serializers.SerializerMethodField()
+
+    <span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">Meta</span>:</span>
+        model = Profile
+        fields = (<span class="hljs-string">'username'</span>, <span class="hljs-string">'bio'</span>, <span class="hljs-string">'image'</span>,)
+        read_only_fields = (<span class="hljs-string">'username'</span>,)
+
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">get_image</span><span class="hljs-params">(self, obj)</span>:</span>
+        <span class="hljs-keyword">if</span> obj.image:
+            <span class="hljs-keyword">return</span> obj.image
+
+        <span class="hljs-keyword">return</span> <span class="hljs-string">'https://static.productionready.io/images/smiley-cyrus.jpg'</span>
+</code></pre>
+<p>В этом фрагменте кода нет ничего, чего бы мы не рассматривали ранее. Сериализатор очень похож на <code>UserSerializer</code>, который мы создали в прошлой главе. Можно переходить к следующему разделу.</p>
+<h2 id="-profile">Отображаем объекты Profile</h2>
+<p>Поскольку мы знаем, что столкнемся с той же проблемой, которая у нас уже была, когда данные о пользователе выдавались не в пространстве имен &quot;user&quot;, давайте не будем медлить и создадим <code>ProfileJSONRenderer</code>. Этот формирователь ответа от сервера будет очень похож на <code>UserJSONRenderer</code>, поэтому мы создадим <code>ConduitJSONRenderer</code>, от которого могут наследоваться как <code>UserJSONRenderer</code>, так и <code>ProfileJSONRenderer</code>. Это позволит нам абстрагировать некоторые части кода и избежать их дублирования.</p>
+<p>Добавьте следующее в <code>conduit/apps/core/renderers.py</code>:</p>
+<pre><code class="lang-python"><span class="hljs-keyword">import</span> json
+
+<span class="hljs-keyword">from</span> rest_framework.renderers <span class="hljs-keyword">import</span> JSONRenderer
+
+
+<span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">ConduitJSONRenderer</span><span class="hljs-params">(JSONRenderer)</span>:</span>
+    charset = <span class="hljs-string">'utf-8'</span>
+    object_label = <span class="hljs-string">'object'</span>
+
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">render</span><span class="hljs-params">(self, data, media_type=None, renderer_context=None)</span>:</span>
+        <span class="hljs-comment"># Если представление генерирует ошибку (например, пользователь не может быть аутентифицирован)</span>
+        <span class="hljs-comment"># `data` будет содержать ключ `errors`. Мы хотим, чтобы </span>
+        <span class="hljs-comment"># используемый по умолчанию JSONRenderer обрабатывал ошибки, поэтому нам нужно</span>
+        <span class="hljs-comment"># проверить этот случай.</span>
+        errors = data.get(<span class="hljs-string">'errors'</span>, <span class="hljs-keyword">None</span>)
+
+        <span class="hljs-keyword">if</span> errors <span class="hljs-keyword">is</span> <span class="hljs-keyword">not</span> <span class="hljs-keyword">None</span>:
+            <span class="hljs-comment"># Как было сказано выше, мы позволяем используемому по умолчанию JSONRenderer</span>
+            <span class="hljs-comment"># обрабатывать ошибки.</span>
+            <span class="hljs-keyword">return</span> super(ConduitJSONRenderer, self).render(data)
+
+        <span class="hljs-keyword">return</span> json.dumps({
+            self.object_label: data
+        })
+</code></pre>
+<p>Существует два отличия между <code>ConduitJSONRenderer</code> и <code>UserJSONRenderer</code>, которые мы создали:</p>
+<ol>
+<li><p>В <code>UserJSONRenderer</code> мы не указывали свойство <code>object_label</code>. Причина заключалась в том, что мы знали, что объектом для <code>UserJSONRenderer</code> будет <code>user</code>. В этом случае объект (или пространство имен) будет меняться в зависимости от того какой класс будет наследоваться от <code>ConduitJSONRenderer</code>. Поэтому мы позволяем задавать свойство <code>object_label</code> динамически и по молчанию принимаем его равным <code>object</code>.</p>
+</li>
+<li><p><code>UserJSONRenderer</code> нужно осуществлять декодирование JWT, если он является частью запроса. Это декодирование нужно осуществлять только в <code>UserJSONRenderer</code> и оно не будет использоваться в каком-либо другом формирователе ответа от сервера. Не имеет смысла добавлять его в <code>ConduitJSONRenderer</code>. Скоро мы обновим <code>UserJSONRenderer</code>, чтобы учесть эту особенность.</p>
+</li>
+</ol>
+<p>Теперь добавьте следующее в <code>conduit/apps/profiles/renderers.py</code>:</p>
+<pre><code class="lang-python"><span class="hljs-keyword">from</span> conduit.apps.core.renderers <span class="hljs-keyword">import</span> ConduitJSONRenderer
+
+
+<span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">ProfileJSONRenderer</span><span class="hljs-params">(ConduitJSONRenderer)</span>:</span>
+    object_label = <span class="hljs-string">'profile'</span>
+</code></pre>
+<p>В этом фрагменте кода нет ничего нового, поскольку <code>ProfileJSONRenderer</code> не отличается по своему функционалу от <code>UserJSONRenderer</code>.</p>
+<p>Откройте <code>conduit/apps/authentication/renderers.py</code> и внесите следующие изменения:</p>
+<pre><code class="lang-python">-<span class="ruby">import json
+</span>-<span class="ruby">
+</span>-<span class="ruby">from rest_framework.renderers import JSONRenderer
+</span>+from conduit.apps.core.renderers import ConduitJSONRenderer
+
+
+-<span class="ruby"><span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">UserJSONRenderer</span>(<span class="hljs-title">JSONRenderer</span>):</span>
+</span>+class UserJSONRenderer(ConduitJSONRenderer):
+-<span class="ruby">    charset = <span class="hljs-string">'utf-8'</span>
+</span>+    object_label = ‘user’
+
+    def render(self, data, media_type=None, renderer_context=None):
+-<span class="ruby">        <span class="hljs-comment"># Если представление генерирует ошибку (например пользователь не может быть аутентифицирован</span>
+</span>-<span class="ruby">        <span class="hljs-comment"># или подобную), `data` будут содержать ключ `errors`. Мы хотим, чтобы используемый</span>
+</span>-<span class="ruby">        <span class="hljs-comment"># по умолчанию JSONRenderer обрабатывал ошибки, поэтому необходимо</span>
+</span>-<span class="ruby">        <span class="hljs-comment"># проверить наличие этого ключа в `data`.</span>
+</span>-<span class="ruby">        errors = data.get(<span class="hljs-string">'errors'</span>, None)
+</span>-<span class="ruby">
+</span>        # Если был передан ключ `token` в запросе, то он будет байтовым объектом.
+        # Байтовые объекты плохо сериализуются, поэтому нам надо его декодировать
+        # прежде чем выдавать объект User.
+        token = data.get('token', None)
+
+-<span class="ruby">        <span class="hljs-keyword">if</span> errors is <span class="hljs-keyword">not</span> <span class="hljs-symbol">None:</span>
+</span>-<span class="ruby">            <span class="hljs-comment"># As mentioned above, we will let the default JSONRenderer handle</span>
+</span>-<span class="ruby">            <span class="hljs-comment"># rendering errors.</span>
+</span>-<span class="ruby">            <span class="hljs-keyword">return</span> <span class="hljs-keyword">super</span>(UserJSONRenderer, <span class="hljs-keyword">self</span>).render(data)
+</span>
+        if token is not None and isinstance(token, bytes):
+            # Как было сказано выше, мы декодируем `token` только в том случае,
+            # если он является байтовым объектом.
+            data['token'] = token.decode('utf-8')
+
+-<span class="ruby">        <span class="hljs-comment"># Наконец мы можем выдать наши данные в пространстве имен "user".</span>
+</span>-<span class="ruby">        <span class="hljs-keyword">return</span> json.dumps({
+</span>-<span class="ruby">            <span class="hljs-string">'user'</span>: data
+</span>-<span class="ruby">        })
+</span>+        return super(UserJSONRenderer, self).render(data)
+</code></pre>
+<p>В основном всё что мы сделали здесь - это удалили те части, которые теперь находятся в <code>ConduitJSONRenderer</code>.</p>
+<p>Для <code>UserJSONRenderer</code> всё должно работать точно так же как работало ранее. Чтобы проверить это, выполните запрос &quot;Current User&quot; в Postman.</p>
+<h2 id="profileretrieveapiview">ProfileRetrieveAPIView</h2>
+<p>Давайте добавим конечную точку для получения информации о конкретном пользователе.</p>
+<pre><code class="lang-python"><span class="hljs-keyword">from</span> rest_framework <span class="hljs-keyword">import</span> status
+<span class="hljs-keyword">from</span> rest_framework.generics <span class="hljs-keyword">import</span> RetrieveAPIView
+<span class="hljs-keyword">from</span> rest_framework.permissions <span class="hljs-keyword">import</span> AllowAny
+<span class="hljs-keyword">from</span> rest_framework.response <span class="hljs-keyword">import</span> Response
+
+<span class="hljs-keyword">from</span> .models <span class="hljs-keyword">import</span> Profile
+<span class="hljs-keyword">from</span> .renderers <span class="hljs-keyword">import</span> ProfileJSONRenderer
+<span class="hljs-keyword">from</span> .serializers <span class="hljs-keyword">import</span> ProfileSerializer
+
+
+<span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">ProfileRetrieveAPIView</span><span class="hljs-params">(RetrieveAPIView)</span>:</span>
+    permission_classes = (AllowAny,)
+    renderer_classes = (ProfileJSONRenderer,)
+    serializer_class = ProfileSerializer
+
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">retrieve</span><span class="hljs-params">(self, request, username, *args, **kwargs)</span>:</span>
+        <span class="hljs-comment"># Пытаемся извлечь запрошенный профиль и генерируем исключение, если </span>
+        <span class="hljs-comment"># профиль не найден.</span>
+        <span class="hljs-keyword">try</span>:
+            <span class="hljs-comment"># Мы используем метод `select_related`, чтобы избежать ненужных запросов к </span>
+            <span class="hljs-comment"># базе данных.</span>
+            profile = Profile.objects.select_related(<span class="hljs-string">'user'</span>).get(
+                user__username=username
+            )
+        <span class="hljs-keyword">except</span> Profile.DoesNotExist:
+            <span class="hljs-keyword">raise</span>
+
+        serializer = self.serializer_class(profile)
+
+        <span class="hljs-keyword">return</span> Response(serializer.data, status=status.HTTP_200_OK)
+</code></pre>
+<p>В вышеприведенном коде мы учитываем случай, когда запрошенного профиля не существует, но делаем это не совсем верно. В частности, мы никак не контролируем сообщение об ошибке, которое получит клиент. Давайте попытаемся исправить этот недочёт. </p>
+<h2 id="profiledoesnotexist">ProfileDoesNotExist</h2>
+<p>Создайте файл с названием <code>conduit/apps/profiles/exceptions.py</code> и добавьте в него следующий код:</p>
+<pre><code class="lang-python"><span class="hljs-keyword">from</span> rest_framework.exceptions <span class="hljs-keyword">import</span> APIException
+
+
+<span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">ProfileDoesNotExist</span><span class="hljs-params">(APIException)</span>:</span>
+    status_code = <span class="hljs-number">400</span>
+    default_detail = <span class="hljs-string">'The requested profile does not exist.'</span>
+</code></pre>
+<p>Это простое исключение. В Django REST фреймворк каждый раз, когда Вы хотите создать своё собственное, пользовательское исключение Вы наследуете его от <code>APIException</code>. Всё что Вам нужно сделать затем - это указать свойства <code>default_detail</code> и <code>status_code</code>. Параметры по умолчанию для этого исключения можно переопределить для каждого конкретного случая, если Вы посчитаете, что так стоит сделать.</p>
+<p>Внесите следующие изменения в функцию <code>core_exception_handler</code> из файла <code>conduit/apps/core/exceptions.py</code>:</p>
+<pre><code class="lang-python"><span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">core_exception_handler</span><span class="hljs-params">(exc, context)</span></span>:
+    <span class="hljs-comment"># Если возникает исключение, которое мы здесь явно не обрабатываем, мы хотим,</span>
+    <span class="hljs-comment"># поручить его обработку стандартному DRF обработчику. Если мы хотим обработать данный тип исключения,</span>
+    <span class="hljs-comment"># то нам всё равно нужен доступ к ответу, генерируемому DRF,</span>
+    <span class="hljs-comment"># поэтому в первую очередь необходимо получить его.</span>
+    response = exception_handler(exc, context)
+    handlers = {
++        <span class="hljs-string">'ProfileDoesNotExist'</span>: _handle_generic_error,
+        <span class="hljs-string">'ValidationError'</span>: _handle_generic_error
+    }
+    <span class="hljs-comment"># В строке кода после этого комментария видно как мы определяем</span>
+    <span class="hljs-comment"># тип текущего исключения. Затем мы используем его, чтобы понять должны ли мы обрабатывать это</span>
+    <span class="hljs-comment"># исключение или можно позволить Django REST фреймворку сделать это за нас.    </span>
+    exception_class = exc.__class_<span class="hljs-number">_</span>.__name_<span class="hljs-number">_</span>
+
+    <span class="hljs-keyword">if</span> exception_class <span class="hljs-keyword">in</span> <span class="hljs-symbol">handlers:</span>
+        <span class="hljs-comment"># Если это исключение одно из тех, что мы хотим обрабатывать, то обрабатываем его. В противном случае,</span>
+        <span class="hljs-comment"># возвращаем ответ, сгенерированный ранее стандартным обработчиком исключений.</span>
+        <span class="hljs-keyword">return</span> handlers[exception_class](exc, context, response)
+
+    <span class="hljs-keyword">return</span> response
+</code></pre>
+<p>Мы будем обрабатывать наше пользовательское исключение так же, как и <code>ValidationError</code>, но теперь мы можем корректировать информацию об  ошибке, которую увидит клиент. Не останавливаясь на полпути, добавим <code>ProfileDoesNotExist</code>  в наше представление.</p>
+<p>Откройте <code>conduit/apps/profiles/views.py</code> и добавьте следующие изменение:</p>
+<pre><code class="lang-python"><span class="hljs-keyword">from</span> rest_framework <span class="hljs-keyword">import</span> status
+<span class="hljs-keyword">from</span> rest_framework.generics <span class="hljs-keyword">import</span> RetrieveAPIView
+<span class="hljs-keyword">from</span> rest_framework.permissions <span class="hljs-keyword">import</span> AllowAny
+<span class="hljs-keyword">from</span> rest_framework.response <span class="hljs-keyword">import</span> Response
+
++<span class="hljs-keyword">from</span> .exceptions <span class="hljs-keyword">import</span> ProfileDoesNotExist
+<span class="hljs-keyword">from</span> .models <span class="hljs-keyword">import</span> Profile
+<span class="hljs-keyword">from</span> .renderers <span class="hljs-keyword">import</span> ProfileJSONRenderer
+<span class="hljs-keyword">from</span> .serializers <span class="hljs-keyword">import</span> ProfileSerializer
+
+
+<span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">ProfileRetrieveAPIView</span><span class="hljs-params">(RetrieveAPIView)</span>:</span>
+    permission_classes = (AllowAny,)
+    renderer_classes = (ProfileJSONRenderer,)
+    serializer_class = ProfileSerializer
+
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">retrieve</span><span class="hljs-params">(self, request, username, *args, **kwargs)</span>:</span>
+        <span class="hljs-comment"># Пытаемся извлечь запрошенный профиль и генерируем ошибку, если</span>
+        <span class="hljs-comment"># профиль не может быть найден.</span>
+        <span class="hljs-keyword">try</span>:
+            <span class="hljs-comment"># Мы используем метод `select_related`, чтобы избежать ненужных</span>
+            <span class="hljs-comment"># запросов к базе данных.</span>
+            profile = Profile.objects.select_related(<span class="hljs-string">'user'</span>).get(
+                user__username=username
+            )
+        <span class="hljs-keyword">except</span> Profile.DoesNotExist:
+-            <span class="hljs-keyword">raise</span>
++            <span class="hljs-keyword">raise</span> ProfileDoesNotExist
+
+        serializer = self.serializer_class(profile)
+
+        <span class="hljs-keyword">return</span> Response(serializer.data, status=status.HTTP_200_OK)
+</code></pre>
+<p>Проблема решена! Давайте добавим url-адрес для <code>ProfileRetrieveAPIView</code> в наш файл urls.py.</p>
+<p>Создайте <code>conduit/apps/profiles/urls.py</code> со следующим содержимым:</p>
+<pre><code class="lang-python"><span class="hljs-keyword">from</span> django.conf.urls <span class="hljs-keyword">import</span> url
+
+<span class="hljs-keyword">from</span> .views <span class="hljs-keyword">import</span> ProfileRetrieveAPIView
+
+urlpatterns = [
+    url(<span class="hljs-string">r'^profiles/(?P&lt;username&gt;\w+)/?$'</span>, ProfileRetrieveAPIView.as_view()),
+]
+</code></pre>
+<p>Как и в случае с <code>conduit/apps/authentication/urls.py</code> нам надо зарегистрировать этот новый файл с url  в переменной <code>urlpatterns</code> из файла <code>conduit/urls.py</code>.</p>
+<p>Откройте <code>conduit/urls.py</code> и внесите следующее изменение:</p>
+<pre><code class="lang-python">urlpatterns = [
+    url(<span class="hljs-string">r'^admin/'</span>, admin.site.urls),
+
+    url(<span class="hljs-string">r'^api/'</span>, include(<span class="hljs-string">'conduit.apps.authentication.urls'</span>, namespace=<span class="hljs-string">'authentication'</span>)),
++    url(<span class="hljs-string">r'^api/'</span>, include(<span class="hljs-string">'conduit.apps.profiles.urls'</span>, namespace=<span class="hljs-string">'profiles'</span>)),
+]
+</code></pre>
+<h2 id="-postman">Получаем профиль с помощью Postman</h2>
+<p>Если вы откроете Postman и загляните в каталог &quot;Profiles&quot;, то увидите там запрос под названием &quot;Profile.&quot;  Пошлите запрос на сервер, чтобы проверить, что всё что мы сделали до этого работает. Предполагая, что всё прошло хорошо, мы можем двигаться дальше и обновить представление <code>UserRetrieveUpdateAPIView</code>.</p>
+<h2 id="-userretrieveupdateapiview">Обновляем UserRetrieveUpdateAPIView</h2>
+<p>Откройте <code>conduit/apps/authentication/views.py</code> и добавьте следующие изменения в метод <code>update</code>:</p>
+<pre><code class="lang-python">def update(self, request, *<span class="hljs-built_in">args</span>, **kwargs):
+-    serializer_data = request.data.<span class="hljs-built_in">get</span>('user', {})
++    user_data = request.data.<span class="hljs-built_in">get</span>('user', {})
++
++    serializer_data = {
++        ’username': user_data.<span class="hljs-built_in">get</span>('username', request.user.username),
++        ’email': user_data.<span class="hljs-built_in">get</span>('email', request.user.email),
++
++        ’profile': {
++            ’bio': user_data.<span class="hljs-built_in">get</span>('bio', request.user.profile.bio),
++            ’<span class="hljs-built_in">image</span>': user_data.<span class="hljs-built_in">get</span>('<span class="hljs-built_in">image</span>', request.user.profile.<span class="hljs-built_in">image</span>)
++        }
++    }
+
+    # Вот где используется последовательность сериализации, 
+    # проверки, сохранения, о которой мы говорили ранее.
+    serializer = self.serializer_class(
+        request.user, data=serializer_data, partial=True
+    )
+    serializer.is_valid(raise_exception=True)
+    serializer.<span class="hljs-built_in">save</span>()
+
+    <span class="hljs-built_in">return</span> Response(serializer.data, <span class="hljs-built_in">status</span>=<span class="hljs-built_in">status</span>.HTTP_200_OK)
+</code></pre>
+<p>Эти изменения позволят нам использовать одну и ту же конечную точку для обновления электронной почты, пароля, биографии и аватара пользователя.</p>
+<p>Нам также необходимо обновить <code>UserSerializer</code>, чтобы метод <code>update</code> работал с профилями.</p>
+<h2 id="-userserializer">Обновляем UserSerializer</h2>
+<p>Откройте <code>conduit/apps/authentication/serializers.py</code> и обновите импорты следующим образом:</p>
+<pre><code class="lang-python">from django<span class="hljs-selector-class">.contrib</span><span class="hljs-selector-class">.auth</span> import authenticate
+
+from rest_framework import serializers
+
++from conduit<span class="hljs-selector-class">.apps</span><span class="hljs-selector-class">.profiles</span><span class="hljs-selector-class">.serializers</span> import ProfileSerializer
++from <span class="hljs-selector-class">.models</span> import User
+</code></pre>
+<p>Затем мы можем обновить <code>UserSerializer</code> следующим образом:</p>
+<pre><code class="lang-python">class UserSerializer(serializers.ModelSerializer):
+<span class="hljs-code">    Handles serialization and deserialization of User objects."""</span>
+
+<span class="hljs-code">    # Длина пароля должна быть не менее 8 символов, но не более 128 </span>
+<span class="hljs-code">    # символов. Эти значения по умолчанию заданы в Django. Мы могли бы изменить их, но это бы</span>
+<span class="hljs-code">    # дополнительных усилий, не давая никаких преимуществ, поэтому давайте будем использовать</span>
+<span class="hljs-code">    # значения по умолчанию.</span>
+<span class="hljs-code">    password = serializers.CharField(</span>
+<span class="hljs-code">        max_length=128,</span>
+<span class="hljs-code">        min_length=8,</span>
+<span class="hljs-code">        write_only=True</span>
+<span class="hljs-code">    )</span>
+<span class="hljs-bullet">+
+</span><span class="hljs-bullet">+    </span># Когда поле должно обрабатываться как сериализатор, мы должны явно указать это.
+<span class="hljs-bullet">+    </span># Кроме того, <span class="hljs-code">`UserSerializer`</span> никогда не должен выдавать информацию о профиле,
+<span class="hljs-bullet">+    </span># поэтому мы установим свойство <span class="hljs-code">`write_only=True`</span>.
+<span class="hljs-bullet">+    </span>profile = ProfileSerializer(write_only=True)
+<span class="hljs-bullet">+
+</span><span class="hljs-bullet">+    </span># Мы хотим получить поля <span class="hljs-code">`bio`</span> и <span class="hljs-code">`image`</span> из соответствующей модели 
+<span class="hljs-bullet">+    </span># Profile.
+<span class="hljs-bullet">+    </span>bio = serializers.CharField(source='profile.bio', read_only=True)
+<span class="hljs-bullet">+    </span>image = serializers.CharField(source='profile.image', read_only=True)
+
+<span class="hljs-code">    class Meta:</span>
+<span class="hljs-code">        model = User</span>
+<span class="hljs-bullet">-        </span>fields = (‘email’, ‘username’, ‘password’, ‘token’,)
+<span class="hljs-bullet">+        </span>fields = (
+<span class="hljs-bullet">+            </span>'email', 'username', 'password', 'token', 'profile', 'bio',
+<span class="hljs-bullet">+            </span>'image',
+<span class="hljs-bullet">+        </span>)
+
+<span class="hljs-code">    # …</span>
+</code></pre>
+<p>Наконец изменим метод <code>update</code> <code>UserSerializer</code>, добавив обработку данных профиля.</p>
+<pre><code class="lang-python">def update(self, <span class="hljs-keyword">instance</span>, validated_data):
+    <span class="hljs-string">""</span><span class="hljs-string">"Метод осуществляет обновление модели User."</span><span class="hljs-string">""</span>
+
+    # Для паролей не должен использоваться метод `setattr`, в отличие от других полей.
+    # Это связано с тем, что Django предоставляет функцию, которая осуществляет хэширование  
+    # и добавление солей к паролям, что важно для безопасности приложения. Это означает, что мы должны
+    # удалить поле password из словаря `validated_data`, прежде чем обработать данные, хранящиеся в нём.    
+    password = validated_data.pop(<span class="hljs-string">'password'</span>, None)
+
++    # Как и пароли, мы должны обрабатывать профили отдельно от других полей. Для этого
++    # мы удаляем данные профиля из словаря `validated_data`.
++    profile_data = validated_data.pop(<span class="hljs-string">'profile'</span>, {})
++
+    for (key, value) <span class="hljs-keyword">in</span> validated_data.items():
+        # Для ключей, оставшихся в `validated_data`, мы присвоим их значения атрибутам 
+        # текущего экземпляра `User`.
+        setattr(<span class="hljs-keyword">instance</span>, key, value)
+
+    <span class="hljs-keyword">if</span> password is not None:
+        # Метод `.set_password()` был упомянут выше. Он осуществляет все необходимые операции 
+        # для безопасного сохранения пароля, освобождая нас от необходимости заниматься этим.
+        <span class="hljs-keyword">instance</span>.set_password(password)
+
+    # Наконец, после обновления всех полей, мы должны явно сохранить 
+    # модель. Стоит отметить, что метод `.set_password()` не сохраняет
+    # модель.
+    <span class="hljs-keyword">instance</span>.save()
+
++    for (key, value) <span class="hljs-keyword">in</span> profile_data.items():
++        # Мы делаем то же чамое, что делили выше, но в этот раз мы вносим
++        # изменения в модель Profile.
++        setattr(<span class="hljs-keyword">instance</span>.profile, key, value)
++
++    # Сохраняем профиль так же как до этого сохранили пользователя.
++    <span class="hljs-keyword">instance</span>.profile.save()
++
+    return <span class="hljs-keyword">instance</span>
+</code></pre>
+<p>Со всеми этими изменениями мы готовы предоставить наш новый функционал - профили - нашим пользователям! Для проверки его работоспособности, вернитесь в Postman и осуществите запросы &quot;Current User&quot; и &quot;Update User&quot; в каталоге &quot;Auth&quot;, чтобы убедиться, что мы ничего не нарушили во время рефакторинга.</p>
+<h2 id="-">Что будем делать дальше?</h2>
+<p>Следующей темой для рассмотрения будет основа нашего приложения - статьи. Неважно будете ли Вы читать или писать их, они являются самой важной частью нашего приложения. Без статей пользователи вообще никак не смогут использовать наше приложение.</p>
+<p>В следующей главе мы добавим модель и сериализатор для работы со статьями. Мы рассмотрим новое понятие - набор представлений и добавим новый сигнал в наше API. До встречи!</p>
