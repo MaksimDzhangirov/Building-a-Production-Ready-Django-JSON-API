@@ -1,0 +1,819 @@
+<h1 id="-jwt">Настраиваем аутентификацию пользователей с помощью JWT</h1>
+<p>В состав Django входит система аутентификации на базе сессий, которая работает &quot;из коробки&quot;. В неё входят все модели, представления и шаблоны, необходимые для входа пользователей в систему и создания новых учётных записей. Но существует проблема: эта аутентификация Django работает только при использовании стандартного HTML цикла - запрос/ответ.</p>
+<p>Что мы подразумеваем под &quot;стандартным HTML циклом запрос/ответ&quot;? Обычно, когда пользователь хочет осуществить какое-либо действие (например, создать новую учётную запись), он заполняет форму в своём веб браузере. Когда он нажимает кнопку &quot;Отправить&quot;, браузер делает запрос (который включает данные, введенные пользователем в регистрацию форму) к серверу, сервер обрабатывает этот запрос и отвечает HTML кодом или перенаправляет браузер на новую страницу. Это то, что мы имеем ввиду, когда говорим о &quot;полном обновлении страницы&quot;.</p>
+<p>Почему важно знать, что встроенная аутентификация Django работает только со стандартным HTML циклом запрос/ответ? Потому что клиентское приложение, для которого мы создаём это API, не использует этот цикл. Вместо этого, клиентское приложение ожидает, что сервер вернет JSON вместо HTML. Возвращая JSON, мы позволяем клиентскому приложению, а не серверу, решать, что делать дальше. При использовании JSON цикла запрос/ответ, сервер принимает данные, обрабатывает их и возвращает ответ (как и в случае HTML цикла запрос/ответ), но ответ больше не управляет поведением браузера. Он просто сообщает нам результат выполнения запроса.</p>
+<p>К счастью, команда, разрабатывающая Django, поняла, что тенденция веб разработки двигается в этом направлении. Они также учли, что некоторые проекты могут не захотеть использовать встроенные модели, представления и шаблоны. Вместо этого они могут захотеть использовать свои версии. Чтобы все усилия потраченные на разработку встроенной систему аутентификации Django не были потрачены впустую, они решили позволять использовать наиболее важные её части, при этом оставляя возможность настраивать конечный результат.</p>
+<p>Мы более подробно рассмотрим этот вопрос позднее в этом разделе. Пока что, Вам необходимо знать, что:</p>
+<ol>
+<li>Мы создадим свою собственную модель <code>User</code> вместо той, что используется в Django по умолчанию.</li>
+<li>Нам нужно будет создать свои собственные представления, позволяющие возвращать JSON вместо HTML.</li>
+<li>Поскольку мы не будем использовать HTML, нам не будут нужны стандартные Django шаблоны для входа в систему и регистрации.</li>
+</ol>
+<p>Возможно Вы задаётесь вопросом - &quot;Неужели придется писать систему аутентификации с нуля&quot;? Для ответа не него вспомните то, о чём мы говорили раньше - Django позволяет использовать основные части аутентификации без использования стандартной системы аутентификации.</p>
+<blockquote>
+<p>Прочитайте раздел <a href="https://docs.djangoproject.com/es/1.11/topics/auth/default/">Использование системы аутентификации Django</a> из документации Django, чтобы узнать больше о том как работает стандартная аутентификация Django.
+Прочитайте раздел <a href="https://docs.djangoproject.com/es/1.9/topics/auth/customizing/">Модификация аутентификации в Django</a>, чтобы лучше понять, что будет происходить в оставшейся части этой главы. Мы будем использовать информацию из этого раздела позднее.</p>
+</blockquote>
+<h2 id="-">Аутентификациия с использованием сессий</h2>
+<p>По умолчанию Django использует сессии для аутентификации. Прежде чем мы продолжим поговорим о том, что это означает, почему это важно, что такое аутентификация с использованием токенов и JSON веб токены (сокращенно JWT), и какой способ аутентификации мы будем использовать в этом курсе.</p>
+<p>В Django сессии хранятся в cookies. Эти сессии, а также некоторое встроенное связующее программное обеспечение и объекты запроса гарантируют, что у каждого запроса существует связанный с ним пользователь. К нему можно получить доступ через <code>request.user</code>. Когда пользователь вошёл в систему, <code>request.user</code> - это экземпляр класса <code>User</code>. Когда пользователь выходит из системы, <code>request.user</code> - это экземпляр класса <code>AnonymousUser</code>. Не зависимо от того аутентфиицирован пользователь или нет, <code>request.user</code> всегда будет существовать.</p>
+<p>В чём отличие между экземплярами этих объектов? Упрощая скажем, что в любой момент, когда Вы хотите узнать аутентифицирован ли текущий пользователь, Вы можете использовать метод <code>request.user.is_authenticated()</code>, который вернет <code>True</code>, если пользователь аутентифицирован и <code>False</code>, если нет. Если <code>request.user</code> - это экземпляр <code>AnonymousUser</code>, то <code>request.user.is_authenticated()</code> всегда вернет <code>False</code>. Это позволяет разработчику (т. е. Вам!) вместо выражения <code>if request.user is not None and request.user.is_authenticated():</code> использовать <code>if request.user.is_authenticated():</code>. Уменьшение количества вводимых с клавиатуры символов не может не радовать в этом случае!</p>
+<p>В нашем случае клиентское и серверное приложение будут запущены на разных серверах. Серверное приложение будет доступно по адресу <code>http://localhost:3000/</code>, а клиентское - по <code>http://localhost:5000/</code>. В этом случае браузер считает, что приложения запущены на разных доменах как если бы сервер был бы запущен на <code>http://www.server.com</code>, а клиент - на <code>http://www.client.com</code>. Мы не позволим внешним доменам получать доступ к нашим cookies, поэтому нам нужно найти другое, альтернативное решение, не использующее сессии.</p>
+<p>Если Вам интересно почему мы не разрешаем доступ к нашим cookies, ознакомтесь со статьями, посвященными совместному использованию ресурсов между разными источникам (Cross-Origin Resource Sharing (CORS)) и межсайтовой подделкой запросов (Cross-Site Request Forgery (CSRF)), по приведенным ниже ссылкам. Если Вам не терпиться начать писать код, просто перейдите к следующему разделу.</p>
+<blockquote>
+<p>Чтобы узнать больше о Cross-Origin Resource Sharing (CORS), прочитайте эту статью <a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Access_control_CORS">HTTP управление доступом (CORS)</a>.
+Чтобы узнать больше о том как Django защищается от CSRF атак, прочитайте эту статью <a href="https://docs.djangoproject.com/ja/1.11/ref/csrf/">Защита от межсайтовой подделки запроса</a>.</p>
+</blockquote>
+<h2 id="-">Аутентификация с использованием токенов</h2>
+<p>Наиболее распространенной альтернативой аутентификации с использованием сессий является аутентификация с использованием токенов, и мы будем использовать особую разновидность аутентификации с использованием токенов для защиты нашего приложения.</p>
+<p>При использовании аутентификации с использованием токенов сервер выдаёт клиенту токен при успешном входе в систему. Этот токен уникален для каждого вошедшего в систему пользователя и хранится в базе данных вместе с ID пользователя. Подразумевается, что клиент будет посылать токен при последующих запросах, чтобы сервер мог идентифицировать пользователя. Сервер осуществляет идентификацию путем поиска в таблице базе данных, содержащей все созданные токены. Если найден соответствующий токен, сервер проверяет не устарел ли он. Если посланный токен не найден, то пользователь считается не аутентифицированным.</p>
+<p>Поскольку токены хранятся в базе данных, а не в куки, аутентификация с использованием токенов соответствует нашим требованиям.</p>
+<h3 id="-">Проверяем токены</h3>
+<p>Всегда существует возможность хранить не только ID пользователя в токене. Мы также можем хранить в нём такую информацию, как, например, дату, когда истекает токен. В этом учебном пособии мы будем проверять, то эта дата ещё не настала. В противном случае, считается, что токен устарел и не действителен. Поэтому мы удаляем его из базы данных и просим пользователя снова войти в систему.</p>
+<h2 id="json-">JSON веб токены</h2>
+<p>JSON веб токен (сокращенно JWT) является открытым стандартом (<a href="https://tools.ietf.org/html/rfc7519">RFC 7519</a>), который определяет компактный и автономный способ безопасной передачи информации между двумя взаимодействующими сторонами. Вы можете считать JWT улучшенной версией токенов для аутентификации.</p>
+<p>Помните, что выше я говорил об использовании особой разновидности аутентификации с использованием токенов? Я имел ввиду JWT.</p>
+<blockquote>
+<p>Чтобы узнать больше о JWT и о том как они работают, прочитайте эту статью <a href="https://tools.ietf.org/html/rfc7519">Введение в JSON веб токены</a>.</p>
+</blockquote>
+<h2 id="-json-">Почему JSON веб токены лучше, чем обычные токены</h2>
+<p>Существует несколько преимуществ при использовании JWT вместо обычных токенов:
+1) JWT - это открытый стандарт. Это означает, что все реализации JWT должны быть достаточно однотипными, что является преимуществом при работе с разными языками и технологиями. Обычные токены не имеют жёсткой привязки к стандартам, что позволяет разработчику решать как лучше всего реализовать токены.
+2) JWT могут содержать всю информацию о пользователе, что довольно удобно для клиента.
+3) О сложностях, связанных с реализацией алгоритмов, не стоит беспокоиться, поскольку уже существуют готовые бибилиотеки. Использовать самописную систему аутентификации довольно небезопасно, поэтому здесь мы полагаемся &quot;на проверенные в бою&quot; библиотеки, которым можно доверять.</p>
+<h2 id="-user-">Создаём модель User (Пользователь)</h2>
+<p>Не пора ли начать писать код?</p>
+<p>В файле <code>conduit/apps/authentication/models.py</code> хранятся модели, которые мы будем использовать для аутентификации. Если Вы уже склонировали репозиторий, то наверное заметили, что каталог <code>conduit/apps/authentication/</code> уже существует. Но в нём нет файла <code>models.py</code>. Создайте его.</p>
+<blockquote>
+<p>В этом курсе мы специально довольно кратко рассматриваем каждый фрагмент кода. Мы уверены, что используя комментарии в коде и ресурсы, на которые мы даём ссылки, Вы сможете найти всю необходумую Вам информацию.</p>
+</blockquote>
+<p>Нам нужно будет добавить следующие импорты для создания классов <code>User</code> и <code>UserManager</code>, поэтому добавьте следующий код в начало файла:</p>
+<pre><code class="lang-python"><span class="hljs-keyword">import</span> jwt
+
+<span class="hljs-title">from</span> datetime <span class="hljs-keyword">import</span> datetime, timedelta
+
+<span class="hljs-title">from</span> django.conf <span class="hljs-keyword">import</span> settings
+<span class="hljs-title">from</span> django.contrib.auth.models <span class="hljs-keyword">import</span> (
+    <span class="hljs-type">AbstractBaseUser</span>, <span class="hljs-type">BaseUserManager</span>, <span class="hljs-type">PermissionsMixin</span>
+)
+<span class="hljs-title">from</span> django.db <span class="hljs-keyword">import</span> models
+</code></pre>
+<p>Настраивая аутентификацию в Django необходимо указать, что Вы используете свой, пользовательский класс <code>Manager</code> с двумя методами: <code>create_user</code> и <code>create_superuser</code>. Чтобы узнать как настроить аутентификацию в Django, прочитайте раздел <a href="https://docs.djangoproject.com/en/1.10/topics/auth/customizing/#substituting-a-custom-user-model">Замена стандартной модели User на созданную пользователем</a>.</p>
+<p>Для начала создайте класс <code>UserManager</code>.</p>
+<p>Введите код для класса <code>UserManager</code> в файл <code>conduit/apps/authentication/models.py</code> и обратите внимание на комментарии:</p>
+<blockquote>
+<p>Прочитайте раздел <a href="https://docs.djangoproject.com/en/1.10/topics/db/managers/">Менеджеры</a>, чтобы узнать что делает класс <code>Manager</code>.</p>
+</blockquote>
+<pre><code class="lang-python"><span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">UserManager</span><span class="hljs-params">(BaseUserManager)</span>:</span>
+    <span class="hljs-string">"""
+    Django требует, чтобы при создании нестандартной, пользовательской модели 
+    пользователя использовался свой собственный класс Manager. Наследуясь от 
+    `BaseUserManager`, мы заимствуем большую часть кода, которая используется Django
+    при создании модели `User`.
+
+    Все что нам остаётся сделать - это переопределить функцию `create_user`, которую
+    мы будем использовать для создания объектов `User`.        
+    """</span>
+
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">create_user</span><span class="hljs-params">(self, username, email, password=None)</span>:</span>
+        <span class="hljs-string">"""Метод создаёт и возвращает модель `User` 
+        с электронной почтой, именем пользователя и паролем."""</span>
+        <span class="hljs-keyword">if</span> username <span class="hljs-keyword">is</span> <span class="hljs-keyword">None</span>:
+            <span class="hljs-keyword">raise</span> TypeError(<span class="hljs-string">'Users must have a username.'</span>)
+
+        <span class="hljs-keyword">if</span> email <span class="hljs-keyword">is</span> <span class="hljs-keyword">None</span>:
+            <span class="hljs-keyword">raise</span> TypeError(<span class="hljs-string">'Users must have an email address.'</span>)
+
+        user = self.model(username=username, email=self.normalize_email(email))
+        user.set_password(password)
+        user.save()
+
+        <span class="hljs-keyword">return</span> user
+
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">create_superuser</span><span class="hljs-params">(self, username, email, password)</span>:</span>
+        <span class="hljs-string">"""Метод создаёт и возвращает модель `User` с правами 
+        суперпользователя (админа)."""</span>
+        <span class="hljs-keyword">if</span> password <span class="hljs-keyword">is</span> <span class="hljs-keyword">None</span>:
+            <span class="hljs-keyword">raise</span> TypeError(<span class="hljs-string">'Superusers must have a password.'</span>)
+
+        user = self.create_user(username, email, password)
+        user.is_superuser = <span class="hljs-keyword">True</span>
+        user.is_staff = <span class="hljs-keyword">True</span>
+        user.save()
+
+        <span class="hljs-keyword">return</span> user
+</code></pre>
+<p>Теперь, когда мы создали класс <code>UserMenager</code>, мы можем создать модель <code>User</code>. Добавьте модель <code>User</code> в конец файла <code>conduit/apps/authentication/models.py</code>.</p>
+<pre><code class="lang-python"><span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">User</span><span class="hljs-params">(AbstractBaseUser, PermissionsMixin)</span>:</span>
+    <span class="hljs-comment"># У каждого `User` должен быть уникальный человеко-понятный идентификатор,</span>
+    <span class="hljs-comment"># который мы можем использовать для представления `User` в UI. Мы хотим</span>
+    <span class="hljs-comment"># проиндексировать этот столбец в базе данных для ускорения поиска.    </span>
+    username = models.CharField(db_index=<span class="hljs-keyword">True</span>, max_length=<span class="hljs-number">255</span>, unique=<span class="hljs-keyword">True</span>)
+
+    <span class="hljs-comment"># Нам также нужно каким-то образом связываться с пользователем</span>
+    <span class="hljs-comment"># и способ идентификации пользователя при входе в систему. Поскольку нам в</span>
+    <span class="hljs-comment"># любом случае необходим адрес электронной почты для связи с пользователем, </span>
+    <span class="hljs-comment"># мы будем также использовать email для входа в систему, поскольку он </span>
+    <span class="hljs-comment"># наиболее часто используется в качестве логина на момент написания учебного </span>
+    <span class="hljs-comment"># пособия.    </span>
+    email = models.EmailField(db_index=<span class="hljs-keyword">True</span>, unique=<span class="hljs-keyword">True</span>)
+
+    <span class="hljs-comment"># Когда пользователь больше не захочет использовать нашу платформу,     </span>
+    <span class="hljs-comment"># он может захотеть удалить свою учетную запись. Для нас это будет проблемой, </span>
+    <span class="hljs-comment"># поскольку собранные о пользователе данные ценны для нас и мы не хотим удалять их. </span>
+    <span class="hljs-comment"># Мы просто предложим пользователям отключить их учетную запись вместо её удаления.</span>
+    <span class="hljs-comment"># Таким образом, они больше не будут отображаться на сайте, но мы сможем продолжать</span>
+    <span class="hljs-comment"># анализировать собранные данные.    </span>
+    is_active = models.BooleanField(default=<span class="hljs-keyword">True</span>)
+
+    <span class="hljs-comment"># Флаг `is_staff` используется Django, чтобы определить кто может, </span>
+    <span class="hljs-comment"># а кто - нет входить в систему администрирования Django. Для большинства пользователей</span>
+    <span class="hljs-comment"># значение этого флага всегда будет равно false.</span>
+    is_staff = models.BooleanField(default=<span class="hljs-keyword">False</span>)
+
+    <span class="hljs-comment"># Временная метка, показывающая когда был создан этот объект.</span>
+    created_at = models.DateTimeField(auto_now_add=<span class="hljs-keyword">True</span>)
+
+    <span class="hljs-comment"># Временная метка, показывающая, когда в последний раз обновлялся этот объект.</span>
+    updated_at = models.DateTimeField(auto_now=<span class="hljs-keyword">True</span>)
+
+    <span class="hljs-comment"># При использовании нестандартной, пользовательской модели пользователя необходимо</span>
+    <span class="hljs-comment"># определить дополнительные поля, требуемые Django.</span>
+
+    <span class="hljs-comment"># Свойство `USERNAME_FIELD` указывает какое поле будет использоваться для входа в систему.</span>
+    <span class="hljs-comment"># Здесь мы хотим использовать поле email.</span>
+    USERNAME_FIELD = <span class="hljs-string">'email'</span>
+    REQUIRED_FIELDS = [<span class="hljs-string">'username'</span>]
+
+    <span class="hljs-comment"># Сообщаем Django, что для работы с объектами этого типа нужно использовать </span>
+    <span class="hljs-comment"># определенный выше класс UserManager.</span>
+    objects = UserManager()
+
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">__str__</span><span class="hljs-params">(self)</span>:</span>
+        <span class="hljs-string">"""
+        Метод возвращает строковое предствление текущего `User`.
+
+        Эта строка используется при выводе модели `User` в консоли.        
+        """</span>
+        <span class="hljs-keyword">return</span> self.email
+
+<span class="hljs-meta">    @property</span>
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">token</span><span class="hljs-params">(self)</span>:</span>
+        <span class="hljs-string">"""
+        Метод позволяет нам получить токен пользователя, вызывая `user.token` 
+        вместо `user.generate_jwt_token()`.
+
+        Это возможно благодаря декоратору `@property`, указанному выше. `token` называется 
+        "динамическим свойством".
+        """</span>
+        <span class="hljs-keyword">return</span> self._generate_jwt_token()
+
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">get_full_name</span><span class="hljs-params">(self)</span>:</span>
+        <span class="hljs-string">"""
+        Этот метод нужен Django, например, для работы с электронными письмами. 
+        Чаще всего метод возвращает имя и фамилию пользователя. Но поскольку
+        мы не храним настоящих имен пользователей, мы возвращаем вместо этого 
+        их username.
+        """</span>
+        <span class="hljs-keyword">return</span> self.username
+
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">get_short_name</span><span class="hljs-params">(self)</span>:</span>
+        <span class="hljs-string">"""
+        Этот метод нужен Django, например, для работы с электронными письмами. 
+        Чаще всего метод возвращает имя пользователя. Но поскольку
+        мы не храним настоящих имен пользователей, мы возвращаем вместо этого 
+        их username.
+        """</span>
+        <span class="hljs-keyword">return</span> self.username
+
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">_generate_jwt_token</span><span class="hljs-params">(self)</span>:</span>
+        <span class="hljs-string">"""
+        Генерирует JSON веб токен, который хранит ID данного пользователя, истекающий через 60 дней после создания.
+        """</span>
+        dt = datetime.now() + timedelta(days=<span class="hljs-number">60</span>)
+
+        token = jwt.encode({
+            <span class="hljs-string">'id'</span>: self.pk,
+            <span class="hljs-string">'exp'</span>: int(dt.strftime(<span class="hljs-string">'%s'</span>))
+        }, settings.SECRET_KEY, algorithm=<span class="hljs-string">'HS256'</span>)
+
+        <span class="hljs-keyword">return</span> token.decode(<span class="hljs-string">'utf-8'</span>)
+</code></pre>
+<p>Просмотрите приведенный выше фрагмент кода в течение нескольких минут, а затем сделайте следующее:</p>
+<p>Если Вы хотите больше узнать о том как использовать нестандартную, пользовательскую аутентификацию в Django, Вам стоит изучить документацию. Материал, приведенный по ниже перечисленным ссылкам не является обязательным для изучения, но мы рекомендуем Вам ознакомиться с ним, если Вас заинтересовала эта тема:</p>
+<ul>
+<li>в разделе <a href="https://docs.djangoproject.com/en/1.10/topics/auth/customizing/#django.contrib.auth.models.CustomUser">models.CustomUser</a> указывается, что Django ожидает от нестандартной, пользовательской модели <code>User</code>.</li>
+<li>в моделях <a href="https://docs.djangoproject.com/en/1.10/topics/auth/customizing/#django.contrib.auth.models.AbstractBaseUser">models.AbstractBaseUser</a> и <a href="https://docs.djangoproject.com/en/1.10/topics/auth/customizing/#django.contrib.auth.models.PermissionsMixin">models.PermissionsMixin</a> уже реализованы некоторые из требований, указанных в предыдущей ссылке.</li>
+<li>в модели <a href="https://docs.djangoproject.com/en/1.10/topics/auth/customizing/#django.contrib.auth.models.BaseUserManager">models.BaseUserManager</a> представлены некотрые полезные инструменты, используя которые можно начать создавать свой класс <code>UserManager</code>.</li>
+<li>В <a href="https://docs.djangoproject.com/en/1.10/ref/models/fields/">справочнике по полям модели</a> перечислены различные типы полей, поддерживаемые Django и параметры, которые можно передать в каждое поле (например, <code>db_index</code> и <code>unique</code>).</li>
+</ul>
+<h2 id="-auth_user_model">Задаём параметр AUTH_USER_MODEL</h2>
+<p>По умолчанию Django предполагает, что для пользователей используется модель <code>django.contrib.auth.models.User</code>. Но мы хотим использовать нашу собственную, нестандартную модуль <code>User</code>. Поскольку мы создали класс <code>User</code>, теперь нам надо указать Django, что нужно использовать нашу модель <code>User</code> вместо той, которая используется по умолчанию.</p>
+<blockquote>
+<p>Настоятельно рекомендуем Вам прочитать главу документации <a href="https://docs.djangoproject.com/en/1.10/topics/auth/customizing/#substituting-a-custom-user-model">Замена стандартной модели User на созданную пользователем</a>. Особенно разделы, отмеченные как &quot;Предупреждения&quot;.</p>
+</blockquote>
+<p>Если Вы уже осуществили миграцию базы данных перед тем как указать Django использовать нестандартную, пользовательскую модель <code>User</code>, Вам нужно удалить созданную базу данных и повторно осуществить миграции.</p>
+<p>Задайте параметр <code>AUTH_USER_MODEL</code> в конце файла <code>conduit/settings.py</code>:</p>
+<pre><code class="lang-python"># Сообщаем Django о созданной нами пользовательской модели `User`. Строка `authentication.User` сообщает Django, что нужно использовать модель `User` из модуля `authentication`. Этот модуль зарегистрирован выше, используя параметр `INSTALLED_APPS`.
+AUTH_USER_MODEL = <span class="hljs-string">'authentication.User'</span>
+</code></pre>
+<h2 id="-">Создаём и запускаем миграции</h2>
+<p>По мере добавления новых моделей и изменении существующих, нам нужно будет обновлять базу данных, чтобы отразить эти изменения. Django использует миграции, чтобы сообщить базе данных, что что-то изменилось, и наша укажет базе данных о необходимости добавления новой таблицы для нашей нестандартной, пользовательской модели <code>User</code>.</p>
+<blockquote>
+<p>Замечание. Если Вы уже запускали команды <code>python manage.py makemigrations</code> или <code>python manage.py migrate</code>, Вам нужно удалить базу данных прежде чем продолжить. Если Вы используете SQLite в качестве базы данных, то просто удалите файл <code>db.sqlite3</code> из корневого каталога Вашего проекта. Django выдаст ошибку, если Вы измените параметр <code>AUTH_USER_MODEL</code> после создания базы данных, поэтому лучше всего удалить старую базу и создать новую.</p>
+</blockquote>
+<p>Теперь можно создавать и применять миграции. После этого мы можем создать нашего первого пользователя.</p>
+<p>Чтобы создать миграции, выполните в консоли следующую команду:</p>
+<pre><code>python manage<span class="hljs-selector-class">.py</span> makemigrations
+</code></pre><p>Эта команда создаст миграции по умолчанию для нашего нового Django проекта. Но она не создаст миграции для новых приложений внутри нашего проекта. В первый раз, когда мы хотим создать миграции для нашего нового приложения, мы должны явно указать это.</p>
+<p>Чтобы создать набор миграций для приложения <code>authentication</code>, запустите следующую команду:</p>
+<pre><code>python manage<span class="hljs-selector-class">.py</span> makemigrations authentication
+</code></pre><p>Она создаст первоначальную миграцию для приложения <code>authentication</code>. В дальнейшем, когда Вы захотите создать миграцию для этого приложения, Вам достаточно будет запустить <code>python manage.py makemigrations</code>.</p>
+<p>Теперь мы можем применить созданные миграции, выполнив следующую команду в консоли:</p>
+<pre><code>python manage<span class="hljs-selector-class">.py</span> migrate
+</code></pre><p>В отличие от команды <code>makemigrations</code>, Вам никогда не нужно указывать приложение, для которого нужно применить миграции, при запуске команды <code>migrate</code>.</p>
+<h2 id="-">Наш первый пользователь</h2>
+<p>Мы создали свою модель <code>User</code> и настроили и запустили базу данных. Следующий шаг - это создание нашего первого объекта <code>User</code>. Мы дадим этому пользователю права суперпользователя, чтобы с его помощью тестировать наш сайт.</p>
+<p>Создайте вашего первого пользователя, выполнив в консоли следующую команду:</p>
+<pre><code>python manage<span class="hljs-selector-class">.py</span> createsuperuser
+</code></pre><p>Django задаст Вам несколько вопросов - нужно будет ввести адрес электронной почты, имя пользователя и пароль. После этого будет создан новый пользователь. Поздравляем!</p>
+<p>Чтобы проверить то, что пользователь действительно создался, давайте откроем оболочку Django из командной строки:</p>
+<pre><code>python manage<span class="hljs-selector-class">.py</span> shell_plus
+</code></pre><p>Если Вы уже использовали Django, то Вы должны быть знакомы с командой <code>shell</code>, но не с <code>shell_plus</code>. Команда <code>shell_plus</code> доступна благодаря библиотеке <code>django-extensions</code>, которая была включена в склонированный Вами проект в начале этого учебного пособия. Библиотеку стоит использовать, поскольку она позволяет автоматически импортировать модели для каждого приложения в настройку <code>INSTALLED_APPS</code>. Её также можно настроить для автоматического импортирования других вспомогательных средств.</p>
+<p>Как только откроется оболочка, выполните следующие команды:</p>
+<blockquote>
+<p><em>Замечание</em>. Вам нужно вводить только команды из строк, перед которыми стоит символ приглашения командной строки <code>&gt;&gt;&gt;</code>. Строки без <code>&gt;&gt;&gt;</code> - это результат выполнения команды, выводимый в консоль.</p>
+</blockquote>
+<pre><code><span class="hljs-meta">&gt;&gt;</span>&gt; user = User.objects.first()
+<span class="hljs-meta">&gt;&gt;</span>&gt; user.username
+‘james<span class="hljs-string">'
+&gt;&gt;&gt; user.token
+'</span>eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJleHAiOjE0Njk0MDY2OTksImlkIjoxfQ.qSnwWVD4PJKhKxgLxY0H5mkTE51QnMWv_kqNJVau1go<span class="hljs-string">'</span>
+</code></pre><p>Если Вы всё сделали правильно, то должны увидеть результат аналогичный тому, который показан в данном фрагменте.</p>
+<h2 id="-">Регистрируем новых пользователей</h2>
+<p>На данный момент пользователь ничего не может делать. Наша следующая задача - создать конечную точку для регистрации новых пользователей.</p>
+<h3 id="registrationserializer">RegistrationSerializer</h3>
+<p>Начнём с создания файла <code>conduit/apps/authentication/serializers.py</code>, введя в него следующий код:</p>
+<pre><code class="lang-python"><span class="hljs-title">from</span> rest_framework <span class="hljs-keyword">import</span> serializers
+
+<span class="hljs-title">from</span> .models <span class="hljs-keyword">import</span> User
+<span class="hljs-class">
+
+<span class="hljs-keyword">class</span> <span class="hljs-type">RegistrationSerializer</span>(<span class="hljs-title">serializers</span>.<span class="hljs-type">ModelSerializer</span>):
+    ""Сериализует запросы на регистрацию и создаёт нового пользователя."""
+
+    # Указываем, что пароль должен быть не менее 8 символов, 
+    # не более 128 символов и не может быть прочитан клиентом    
+    password = serializers.<span class="hljs-type">CharField</span>(
+        <span class="hljs-title">max_length</span>=128,
+        <span class="hljs-title">min_length</span>=8,
+        <span class="hljs-title">write_only</span>=<span class="hljs-type">True</span>
+    )
+
+    # У клиента не должно быть возможности посылать токен при запросе на регистрацию.
+    # Для этого мы передаём в `token` параметр read-only.
+    token = serializers.<span class="hljs-type">CharField</span>(<span class="hljs-title">max_length</span>=255, <span class="hljs-title">read_only</span>=<span class="hljs-type">True</span>)
+
+    <span class="hljs-keyword">class</span> <span class="hljs-type">Meta</span>:
+        model = <span class="hljs-type">User</span>
+        # Здесь перечисляются все поля, которые могут быть включаны в запрос или ответ
+        # с учетом явно указанных выше полей.         
+        fields = ['email', 'username', 'password', 'token']
+
+    def create(<span class="hljs-title">self</span>, <span class="hljs-title">validated_data</span>):
+        # Используем метод `create_user`? написанный ранее для создания нового пользователя.
+        return <span class="hljs-type">User</span>.objects.create_user(**<span class="hljs-title">validated_data</span>)</span>
+</code></pre>
+<p>Просмотрите этот код, уделяя особое внимание комментариям в нём, прежде чем продолжить чтение данного учебного пособия.</p>
+<p>В вышеприведенном коде мы создали класс <code>RegistrationSerializer</code>, который наследуется от <code>serializers.ModelSerializer</code>. <code>serializers.ModelSerializer</code> - это абстракция <code>serializers.Serializer</code>, которую Вы возможно помните, если читали учебное пособие по Django REST фреймворку (DRF). <code>ModelSerializer</code> реализует некоторый функционал, необходимый для сериализации Django моделей вместо нас.</p>
+<p>Также отметим, что сериализатор позволяет Вам определить два метода: <code>create</code> и <code>update</code>. В вышеприведенном примере мы создали наш собственный метод <code>create</code>, используя <code>User.objects.create_user</code>, но не определили метод <code>update</code>. В этом случае DRF будет использовать свой собственный стандартный метод <code>update</code> для обновления информации о пользователе.</p>
+<h3 id="registrationapiview">RegistrationAPIView</h3>
+<p>Теперь мы можем сериализовать запросы и ответы для регистрации пользователя. Затем мы создадим представление, которое будет использоваться как конечная точка, так что клиент должен будет перейти по URL, чтобы создать нового пользователя.</p>
+<p>Создайте <code>conduit/apps/authentication/views.py</code> и введите следующий код:</p>
+<pre><code class="lang-python"><span class="hljs-title">from</span> rest_framework <span class="hljs-keyword">import</span> status
+<span class="hljs-title">from</span> rest_framework.permissions <span class="hljs-keyword">import</span> AllowAny
+<span class="hljs-title">from</span> rest_framework.response <span class="hljs-keyword">import</span> Response
+<span class="hljs-title">from</span> rest_framework.views <span class="hljs-keyword">import</span> APIView
+
+<span class="hljs-title">from</span> .serializers <span class="hljs-keyword">import</span> RegistrationSerializer
+<span class="hljs-class">
+
+<span class="hljs-keyword">class</span> <span class="hljs-type">RegistrationAPIView</span>(<span class="hljs-type">APIView</span>):
+    # Позволяем любому пользователю (аутентифицированному или нет) переходить на эту конечную точку.
+    permission_classes = (<span class="hljs-type">AllowAny</span>,)
+    serializer_class = <span class="hljs-type">RegistrationSerializer</span>
+
+    def post(<span class="hljs-title">self</span>, <span class="hljs-title">request</span>):
+        user = request.data.get('<span class="hljs-title">user'</span>, {})
+
+        # Код, используемый ниже для сериализатора создания, проверки и сохранения пользователя 
+        # является стандартным и Вы будете их часто встречать на протяжении этого курса и позднее работая самостоятельно. 
+        # Ознакомтесь с ними.
+        serializer = self.serializer_class(<span class="hljs-title">data</span>=<span class="hljs-title">user</span>)
+        serializer.is_valid(<span class="hljs-title">raise_exception</span>=<span class="hljs-type">True</span>)
+        serializer.save()
+
+        return <span class="hljs-type">Response</span>(<span class="hljs-title">serializer</span>.<span class="hljs-title">data</span>, <span class="hljs-title">status</span>=<span class="hljs-title">status</span>.<span class="hljs-type">HTTP_201_CREATED</span>)</span>
+</code></pre>
+<p>Давайте рассмотрим некоторые новые моменты в этом фрагменте:</p>
+<ol>
+<li>Свойство <code>permission_classes</code> позволяет определить кто можем использовать эту конечную точку. Мы можем разрешить доступ только аутентифицированным пользователям или пользователям с правами администратора. Мы также можем разрешать доступ только аутентфиицированным пользователям или любому пользователю, основываясь на том является ли эта конечная точка &quot;безопасной&quot; - то есть конечная точка запрашивается с помощью <code>GET</code>, <code>HEAD</code> или <code>OPTIONS</code> запроса. Для изучения этого курса Вам нужно знать только о <code>GET</code> запросах.  Мы поговорим подробнее о <code>permissions_classes</code> позже.</li>
+<li>Код, который Вы видите внутри <code>post</code> метода для сериализатора создания, проверки и сохранения пользователя является стандартным, при использовании DRF. Ознакомтесь с этим кодом, поскольку Вы будете часто его использовать.</li>
+</ol>
+<blockquote>
+<p>Прочитайте о <a href="http://www.django-rest-framework.org/api-guide/permissions/">правах доступа</a> DRF.</p>
+</blockquote>
+<p>Создайте файл <code>conduit/apps/authentication/urls.py</code> и добавьте в него следующий код:</p>
+<pre><code class="lang-python"><span class="hljs-keyword">from</span> django.conf.urls <span class="hljs-keyword">import</span> url
+
+<span class="hljs-keyword">from</span> .views <span class="hljs-keyword">import</span> RegistrationAPIView
+
+urlpatterns = [
+    url(<span class="hljs-string">r'^users/?$'</span>, RegistrationAPIView.as_view()),
+]
+</code></pre>
+<p>Если Вы уже работали с другим фреймворком, таким как Rails, Вам может показаться странным, что первый аргумент, который мы передаём методу <code>url</code> - это регулярное выражение. К этому необходимо привыкнуть, но привыкнув, Вы увидите, что это мощный инструмент. Например, вышеприведенный маршрут будет соответствовать как <code>/users</code>, так и <code>/users/</code>. Это связано с тем, что в Django принято заканчивать маршруты обратным слешом. К сожалению, это противоречит нашим требованиям, согласоно которым не желательно использовать обратные слеши в конце путей. К счастью команда разработчиков Django приходит к нам на помощь. Другое отличие между Django и Rails заключается в том, что в Rails обычно все Ваши пути находятся в одном файле. Хотя можно поступить также в Django считается хорошей практикой разделять пути по отдельным файлам из-за причин, связанных с организацией проекта. Вот что мы сделали здесь. Теперь давайте добавим вышеприведенный файл в наш глобальный файл URL. Откройте <code>conduit/urls.py</code> и Вы увидите следующую строку в начале файла:</p>
+<pre><code class="lang-python">from django<span class="hljs-selector-class">.conf</span><span class="hljs-selector-class">.urls</span> import url
+</code></pre>
+<p>Первое, что мы сделаем, это испортируем метод <code>include</code> из <code>django.conf.urls</code>:</p>
+<pre><code class="lang-python">-from django<span class="hljs-selector-class">.conf</span><span class="hljs-selector-class">.urls</span> import url
++from django<span class="hljs-selector-class">.conf</span><span class="hljs-selector-class">.urls</span> import include, url
+</code></pre>
+<p>Метод <code>include</code> позволяет добавить другой файл <code>urls.py</code> без необходимости выполнения такой работы как импортирование и повторное регистрирование путей в этом файле.</p>
+<p>Ниже Вы увидите:</p>
+<pre><code class="lang-python">urlpatterns = [
+    url(<span class="hljs-string">r'^admin/'</span>, admin.site.urls),
+]
+</code></pre>
+<p>ОБновим этот фрагмент, добавив наш новый файл <code>urls.py</code>:</p>
+<pre><code class="lang-python">urlpatterns = [
+    url(<span class="hljs-string">r'^admin/'</span>, admin.site.urls),
++
++    url(<span class="hljs-string">r'^api/'</span>, include(<span class="hljs-string">'conduit.apps.authentication.urls'</span>, namespace=<span class="hljs-string">'authentication'</span>)),
+]
+</code></pre>
+<h2 id="-postman">Регистрируем пользователей с помощью Postman</h2>
+<p>Теперь когда мы создали модель <code>User</code> и добавили конечную точку для регистрации новых пользователей, мы быстро проверим её работоспособность, чтобы убедиться, что всё работает правильно. Для этого мы будем использовать инструмент Postman c заранее созданным набором конечных точек.</p>
+<p>Если Вы никогда раньше не использовали Postman, ознакомьтесь со учебным пособием <a href="https://thinkster.io/tutorials/testing-backend-apis-with-postman">Тестируем Conduit приложение, используя Postman</a>.</p>
+<p>Откройте Postman и используйте &quot;Register&quot; запрос внутри каталога &quot;Auth&quot;, чтобы создать нового пользователя.</p>
+<p>Превосходно! Впервые мы достигли какого-то реального прогресса!</p>
+<p>Тем не менее кое-что нам нужно исправить. Заметьте, что ответ на запрос &quot;Register&quot; просто выдаёт всю информацию о пользователе. Наш клиент ожидает, что эта информация будет храниться в отдельном пространтсве имен <code>user</code>. Для этого мы создадим свой собственный пользовательский <a href="http://www.django-rest-framework.org/api-guide/renderers/">DRF формирователь ответа от сервера</a>.</p>
+<h2 id="-user">Отображаем объекты User</h2>
+<p>Создайте файл с названием <code>conduit/apps/authentication/renderers.py</code> со следующий содержимым:</p>
+<pre><code class="lang-python"><span class="hljs-keyword">import</span> json
+
+<span class="hljs-keyword">from</span> rest_framework.renderers <span class="hljs-keyword">import</span> JSONRenderer
+
+
+<span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">UserJSONRenderer</span><span class="hljs-params">(JSONRenderer)</span>:</span>
+    charset = <span class="hljs-string">'utf-8'</span>
+
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">render</span><span class="hljs-params">(self, data, media_type=None, renderer_context=None)</span>:</span>
+        <span class="hljs-comment"># Если был передан ключ `token` в запросе, то он будет байтовым объектом.</span>
+        <span class="hljs-comment"># Байтовые объекты плохо сериализуются, поэтому нам надо его декодировать</span>
+        <span class="hljs-comment"># прежде чем выдавать объект User.</span>
+        token = data.get(<span class="hljs-string">'token'</span>, <span class="hljs-keyword">None</span>)
+
+        <span class="hljs-keyword">if</span> token <span class="hljs-keyword">is</span> <span class="hljs-keyword">not</span> <span class="hljs-keyword">None</span> <span class="hljs-keyword">and</span> isinstance(token, bytes):
+            <span class="hljs-comment"># Как было сказано выше, мы декодируем `token` только в том случае,</span>
+            <span class="hljs-comment"># если он является байтовым объектом.</span>
+            data[<span class="hljs-string">'token'</span>] = token.decode(<span class="hljs-string">'utf-8'</span>)
+
+        <span class="hljs-comment"># Наконец мы можем выдать наши данные в пространстве имен "user".</span>
+        <span class="hljs-keyword">return</span> json.dumps({
+            <span class="hljs-string">'user'</span>: data
+        })
+</code></pre>
+<p>В этом фрагменте кода нет ничего нового или интересного, поэтому прочитайте комментарии приведенные там и можете двигаться дальше.</p>
+<p>Теперь откройте <code>conduit/apps/authentication/views.py</code> и импортируйте <code>UserJSONRenderer</code>, добавив следующую строку в начало Вашего файла:</p>
+<pre><code class="lang-python"><span class="hljs-keyword">from</span> .renderers <span class="hljs-keyword">import</span> UserJSONRenderer
+</code></pre>
+<p>Вам также будет необходимо задать свойство <code>renderer_classes</code> класса <code>RegistrationAPIView</code> следующим образом:</p>
+<pre><code class="lang-python"><span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-type">RegistrationAPIView</span>(<span class="hljs-type">APIView</span>):
+    permission_classes = (<span class="hljs-type">AllowAny</span>,)
++    renderer_classes = (<span class="hljs-type">UserJSONRenderer</span>,)
+    serializer_class = <span class="hljs-type">RegistrationSerializer</span>
+
+    # … Остальная часть файла</span>
+</code></pre>
+<p>С помощью <code>UserJSONRenderer</code> теперь используя запрос &quot;Register&quot; в Postman создайте новго пользователя. Заметьте, что в этот раз ответ находится внутри пространства имен &quot;user&quot;.</p>
+<h2 id="-">Реализация входа пользователей в систему</h2>
+<p>Поскольку пользователи теперь могут регистрироваться в приложении Conduit, нам необходим способ с помощью которого они могли бы войти в систему. В этом разделе мы добавим сериализатор и представление, необходимые для того, чтобы пользователи могли войти в систему. Мы также рассмотрим вопрос, связанный с тем как наш API должен обрабатывать ошибки.</p>
+<h2 id="loginserializer">LoginSerializer</h2>
+<p>Откройте <code>conduit/apps/authentication/serializers.py</code> и добавьте следующий импорт в начало файла:</p>
+<pre><code class="lang-python">from django<span class="hljs-selector-class">.contrib</span><span class="hljs-selector-class">.auth</span> import authenticate
+</code></pre>
+<p>Затем создайте следующий сериализатор в этом же файле:</p>
+<pre><code class="lang-python"><span class="hljs-keyword">class</span> LoginSerializer(serializers.Serializer):
+    email = serializers.CharField(max_length=<span class="hljs-number">255</span>)
+    username = serializers.CharField(max_length=<span class="hljs-number">255</span>, read_only=<span class="hljs-literal">True</span>)
+    password = serializers.CharField(max_length=<span class="hljs-number">128</span>, write_only=<span class="hljs-literal">True</span>)
+    token = serializers.CharField(max_length=<span class="hljs-number">255</span>, read_only=<span class="hljs-literal">True</span>)
+
+    def validate(self, data):
+        # В методе `validate` происходит проверка <span class="hljs-string">"правильности"</span> текущего экземпляра
+        # `LoginSerializer`. Для случая входа пользователя в систему, это означает,
+        # что он ввел адрес электронной почты и пароль и что введенная комбинация 
+        # соответствует одному из пользователей в нашей базе данных.
+        email = data.get(<span class="hljs-string">'email'</span>, None)
+        password = data.get(<span class="hljs-string">'password'</span>, None)
+
+        # Генерируем исключение, если 
+        # не был введен адрес электронной почты.
+        <span class="hljs-keyword">if</span> email is None:
+            raise serializers.ValidationError(
+                <span class="hljs-string">'An email address is required to log in.'</span>
+            )
+
+        # Генерируем исключение, если не был введен пароль.
+        <span class="hljs-keyword">if</span> password is None:
+            raise serializers.ValidationError(
+                <span class="hljs-string">'A password is required to log in.'</span>
+            )
+
+        # Метод `authenticate` - это метод, предоставляемый Django, который осуществляет проверку 
+        # правильности введенной комбинации адрес электронной почты/пароль. Заметьте, что Notice how
+        # мы передаём `email` как значение `username`, поскольку в нашей модели User
+        # в качестве `USERNAME_FIELD` мы использовали `email`.
+        user = authenticate(username=email, password=password)
+
+        # Если не было найдено ни одного пользователя соответствующего этой комбинации адрес электронной почты/пароль, то 
+        # метод `authenticate` возвратит `None`. В этом случае генерируем исключение.
+        <span class="hljs-keyword">if</span> user is None:
+            raise serializers.ValidationError(
+                <span class="hljs-string">'A user with this email and password was not found.'</span>
+            )
+
+        # Django предоставляет специальный флаг для нашей модели `User` - `is_active`. Он используется для того, 
+        # чтобы сообщить нам, что пользователь забанен или деактивирован. Такого почти никогда не будет происходить, 
+        # но всё равно этот флаг стоит проверять. Генерируем исключение в случае, если флаг не установлен.
+        <span class="hljs-keyword">if</span> not user.is_active:
+            raise serializers.ValidationError(
+                <span class="hljs-string">'This user has been deactivated.'</span>
+            )
+
+        # Метод `validate` должен возвращать словарь проверенных данных.
+        # Эти данные передаются методам `create` и `update`,
+        # которые будут показаны ниже.
+        return {
+            <span class="hljs-string">'email'</span>: user.email,
+            <span class="hljs-string">'username'</span>: user.username,
+            <span class="hljs-string">'token'</span>: user.token
+        }
+</code></pre>
+<p>После создания сериализатора можно переходить к созданию представления.</p>
+<h2 id="loginapiview">LoginAPIView</h2>
+<p>Откройте <code>conduit/apps/authentication/views.py</code> и обновите следующую строку импорта:</p>
+<pre><code class="lang-python">-from .serializers <span class="hljs-keyword">import</span> RegistrationSerializer
++from .serializers <span class="hljs-keyword">import</span> (
++    <span class="hljs-type">LoginSerializer</span>, <span class="hljs-type">RegistrationSerializer</span>
++)
+</code></pre>
+<p>Затем добавьте новое представление для входа в систему:</p>
+<pre><code class="lang-python"><span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-type">LoginAPIView</span>(<span class="hljs-type">APIView</span>):
+    permission_classes = (<span class="hljs-type">AllowAny</span>,)
+    renderer_classes = (<span class="hljs-type">UserJSONRenderer</span>,)
+    serializer_class = <span class="hljs-type">LoginSerializer</span>
+
+    def post(<span class="hljs-title">self</span>, <span class="hljs-title">request</span>):
+        user = request.data.get('<span class="hljs-title">user'</span>, {})
+
+        # ОБратите внимание на то, что здесь мы не вызываем метод `serializer.save()`,
+        # как делали раньше при создании конечной точки для регистрации.
+        # Это связано с тем, что мы не хотим что-либо сохранять. Метод `validate` нашего 
+        # сериализатора делает всё что нам нужно для реализации входа в систему.        
+        serializer = self.serializer_class(<span class="hljs-title">data</span>=<span class="hljs-title">user</span>)
+        serializer.is_valid(<span class="hljs-title">raise_exception</span>=<span class="hljs-type">True</span>)
+
+        return <span class="hljs-type">Response</span>(<span class="hljs-title">serializer</span>.<span class="hljs-title">data</span>, <span class="hljs-title">status</span>=<span class="hljs-title">status</span>.<span class="hljs-type">HTTP_200_OK</span>)</span>
+</code></pre>
+<p>Откройте <code>conduit/apps/authentication/urls.py</code> и обновите следующую строку импорта:</p>
+<pre><code class="lang-python">-<span class="hljs-keyword">from</span> .views <span class="hljs-keyword">import</span> RegistrationAPIView
++<span class="hljs-keyword">from</span> .views <span class="hljs-keyword">import</span> LoginAPIView, RegistrationAPIView
+</code></pre>
+<p>Добавьте новое правило в список <code>urlpatterns</code>:</p>
+<pre><code class="lang-python">urlpatterns = [
+    url(<span class="hljs-string">r'^users/?$'</span>, RegistrationAPIView.as_view()),
++    url(<span class="hljs-string">r'^users/login/?$'</span>, LoginAPIView.as_view()),
+]
+</code></pre>
+<h2 id="-postman">Осуществляем вход пользователя в систему с помощью Postman</h2>
+<p>На данный момент, пользователь может войти в систему, перейдя по адресу новой конечной точки для входа в систему. Давайте проверим это. Откройте Postman и используйте запрос Login, чтобы войти в систему под одним из пользователей, которого Вы создали ранее. Если попытка входа была успешной, то в ответ будет добавлен токен, который может использоваться в дальнейшем при выполнении запросов, требующих аутентификации пользователя.</p>
+<p>Здесь нам нужно учесть кое-что ещё. Попробуйте использовать запрос Login с неправильной комбинацией адрес электронной почты/пароль. ОБратите внимание на выдаваемую ошибку. Здесь существует две проблемы.</p>
+<p>Прежде всего, <code>non_field_errors</code> звучит странно. Обычно это означает что какое-либо из полей в сериализаторе не прошло валидацию. Поскольку мы переопределили метод <code>validate</code> вместо того, чтобы использовать конкретный метод, например, <code>validate_email</code>, Django REST фреймворк не может определить в каком поле возникла ошибка. По умолчанию выдаётся <code>non_field_errors</code> и поскольку наш клиент будет использовать этот ответ при возникновении ошибок, мы изменим его, выдавая <code>error</code>.</p>
+<p>Во-вторых, клиент ожидает, что любые ошибки должны выдаваться в пространсвте имен <code>errors</code> в JSON ответе, подобно тому как мы создали пространство имен <code>user</code> для запросов входа в систему и регистрации. Мы сделаем это, переопределив используемую по умолчанию обработку ошибок в Django REST фреймворке.</p>
+<h2 id="-exception_handler-non_field_errors_key">Переопределяем параметры EXCEPTION_HANDLER и NON_FIELD_ERRORS_KEY</h2>
+<p>Одна из настроек DRF называется <code>EXCEPTION_HANDLER</code> и возвращает словарь ошибок. Мы хоти, чтобы наши ошибки находились в пространстве имен <code>errors</code>, поэтому нам нужно переопределить <code>EXCEPTION_HANDLER</code>. Мы также переопределим <code>NON_FIELD_ERRORS_KEY</code> как было сказано ранее.</p>
+<p>Давайте начнём с создания файла <code>conduit/apps/core/exceptions.py</code>, добавив в него следующий фрагмент кода:</p>
+<pre><code class="lang-python"><span class="hljs-keyword">from</span> rest_framework.views <span class="hljs-keyword">import</span> exception_handler
+
+<span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">core_exception_handler</span><span class="hljs-params">(exc, context)</span>:</span>
+    <span class="hljs-comment"># Если возникает исключение, которое мы здесь явно не обрабатываем, мы хотим,</span>
+    <span class="hljs-comment"># поручить его обработку стандартному DRF обработчику. Если мы хотим обработать данный тип исключения,</span>
+    <span class="hljs-comment"># то нам всё равно нужен доступ к ответу, генерируемому DRF,</span>
+    <span class="hljs-comment"># поэтому в первую очередь необходимо получить его.</span>
+    response = exception_handler(exc, context)
+    handlers = {
+        <span class="hljs-string">'ValidationError'</span>: _handle_generic_error
+    }
+    <span class="hljs-comment"># В строке кода после этого комментария видно как мы определяем</span>
+    <span class="hljs-comment"># тип текущего исключения. Затем мы используем его, чтобы понять должны ли мы обрабатывать это</span>
+    <span class="hljs-comment"># исключение или можно позволить Django REST фреймворку сделать это за нас.    </span>
+    exception_class = exc.__class__.__name__
+
+    <span class="hljs-keyword">if</span> exception_class <span class="hljs-keyword">in</span> handlers:
+        <span class="hljs-comment"># Если это исключение одно из тех, что мы хотим обрабатывать, то обрабатываем его. В противном случае,</span>
+        <span class="hljs-comment"># возвращаем ответ, сгенерированный ранее стандартным обработчиком исключений.</span>
+        <span class="hljs-keyword">return</span> handlers[exception_class](exc, context, response)
+
+    <span class="hljs-keyword">return</span> response
+
+<span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">_handle_generic_error</span><span class="hljs-params">(exc, context, response)</span>:</span>
+    <span class="hljs-comment"># Это самый простой обработчик исключений, который мы можем создать.</span>
+    <span class="hljs-comment"># Мы просто получаем ответ, сгенерированный DRF и помещаем его в пространство имен `errors`.</span>
+    response.data = {
+        <span class="hljs-string">'errors'</span>: response.data
+    }
+
+    <span class="hljs-keyword">return</span> response
+</code></pre>
+<p>После этого откройте <code>conduit/settings.py</code> и добавьте новый параметр под названием <code>REST_FRAMEWORK</code> в конец файла, следующим образом:</p>
+<pre><code class="lang-python">REST_FRAMEWORK = {
+    '<span class="hljs-attribute">EXCEPTION_HANDLER'</span>: 'conduit<span class="hljs-variable">.apps</span><span class="hljs-variable">.core</span><span class="hljs-variable">.exceptions</span><span class="hljs-variable">.core_exception_handler</span>',
+    'NON_FIELD_ERRORS_KEY': 'error',
+}
+</code></pre>
+<p>Именно так мы переопределяем настройки в DRF. Мы добавим ещё один параметр немного позднее, когда начнём писать представления, требующие, чтобы пользователь был аутентифицирован.</p>
+<p>Попробуйте отправить ещё раз запрос для входа в систему, используя Postman. При этом используйте неправильную комбинацию адреса электронной почты/пароля.</p>
+<h2 id="-userjsonrenderer">Обновляем UserJSONRenderer</h2>
+<p>Ой! Все равно мы не смогли добиться того чего хотели. Теперь мы получаем ключ <code>errors</code>, но он находится в пространстве имен <code>user</code>. Это необходимо исправить.</p>
+<p>Давайте обновим <code>UserJSONRenderer</code> и будем проверять наличие ключа <code>errors</code>, осуществляя выдачу информации по-другому в случае его наличия. Откройте <code>conduit/apps/authentication/renderers.py</code> и внесите в него следующие изменения:</p>
+<pre><code class="lang-python"><span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">UserJSONRenderer</span><span class="hljs-params">(JSONRenderer)</span>:</span>
+    charset = <span class="hljs-string">'utf-8'</span>
+
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">render</span><span class="hljs-params">(self, data, media_type=None, renderer_context=None)</span>:</span>
++        <span class="hljs-comment"># Если представление генерирует ошибку (например пользователь не может быть аутентифицирован</span>
++        <span class="hljs-comment"># или подобную, `data` будут содержать ключ `errors`. Мы хотим, чтобы используемый </span>
++        <span class="hljs-comment"># по умолчанию JSONRenderer обрабатывал ошибки, поэтому необходимо </span>
++        <span class="hljs-comment"># проверить наличие этого ключа в `data`.</span>
++        errors = data.get(<span class="hljs-string">'errors'</span>, <span class="hljs-keyword">None</span>)
+
+        <span class="hljs-comment"># Если был передан ключ `token` в запросе, то он будет байтовым объектом.</span>
+        <span class="hljs-comment"># Байтовые объекты плохо сериализуются, поэтому нам надо его декодировать</span>
+        <span class="hljs-comment"># прежде чем выдавать объект User.</span>
+        token = data.get(<span class="hljs-string">'token'</span>, <span class="hljs-keyword">None</span>)
+
++        <span class="hljs-keyword">if</span> errors <span class="hljs-keyword">is</span> <span class="hljs-keyword">not</span> <span class="hljs-keyword">None</span>:
++            <span class="hljs-comment"># Как было сказано ранее, мы хотим, чтобы используемый по умолчанию</span>
++            <span class="hljs-comment"># JSONRenderer обрабатывал ошибки.</span>
++            <span class="hljs-keyword">return</span> super(UserJSONRenderer, self).render(data)
+
+        <span class="hljs-keyword">if</span> token <span class="hljs-keyword">is</span> <span class="hljs-keyword">not</span> <span class="hljs-keyword">None</span> <span class="hljs-keyword">and</span> isinstance(token, bytes):
+            <span class="hljs-comment"># Как было сказано выше, мы декодируем `token` только в том случае,</span>
+            <span class="hljs-comment"># если он является байтовым объектом.</span>
+            data[<span class="hljs-string">'token'</span>] = token.decode(<span class="hljs-string">'utf-8'</span>)
+
+        <span class="hljs-comment"># Наконец мы можем выдать наши данные в пространстве имен "user".</span>
+        <span class="hljs-keyword">return</span> json.dumps({
+            <span class="hljs-string">'user'</span>: data
+        })
+</code></pre>
+<p>Теперь ещё раз отправьте запрос для входа в систему. В этот раз всё должно пройти нормально и ответ от сервера должен содержать ключ <code>errors</code> вместо <code>users</code>.</p>
+<h2 id="-">Получаем и обновляем информацию о пользователях</h2>
+<p>Пользователи могут регистрировать новые учетные записи и входить в систему под этими записями. Теперь нужен способ с помощью которого они могли бы получать и обновлять свою информацию. Давайте реализуем его прежде чем перейдём к созданию профилей пользователей.</p>
+<h2 id="userserializer">UserSerializer</h2>
+<p>Мы собираемся создать ещё один сериализатор для профиля. У нас уже созданы сериализаторы для запросов на регистрацию и вход в систему, но нам также нужно иметь возможность сериализовать объекты <code>User</code>.</p>
+<p>Откройте <code>conduit/apps/authentication/serializers.py</code> и добавьте следующий код:</p>
+<pre><code class="lang-python"><span class="hljs-keyword">class</span> UserSerializer(serializers.ModelSerializer):
+    <span class="hljs-string">""</span><span class="hljs-string">"Класс осуществляет сериализацию и десериализацию объектов User."</span><span class="hljs-string">""</span>
+
+    # Длина пароля должна быть не менее <span class="hljs-number">8</span> символов, но не более <span class="hljs-number">128</span> 
+    # символов. Эти значения по умолчанию заданы в Django. Мы могли бы изменить их, но это бы
+    # дополнительных усилий, не давая никаких преимуществ, поэтому давайте будем использовать
+    # значения по умолчанию.
+    password = serializers.CharField(
+        max_length=<span class="hljs-number">128</span>,
+        min_length=<span class="hljs-number">8</span>,
+        write_only=<span class="hljs-literal">True</span>
+    )
+
+    <span class="hljs-keyword">class</span> Meta:
+        model = User
+        fields = (<span class="hljs-string">'email'</span>, <span class="hljs-string">'username'</span>, <span class="hljs-string">'password'</span>, <span class="hljs-string">'token'</span>,)
+
+        # Свойство `read_only_fields` - это альтернатива явного указания атрибута 
+        # `read_only=<span class="hljs-literal">True</span>` для поля как мы делали выше для пароля.
+        # Причина, по которой мы хотим использовать `read_only_fields` здесь заключается в том,
+        # что нам не нужно указывать какие-либо дополнительные атрибуты для поля. 
+        # Полю password нужны были атрибуты `min_length` и
+        # `max_length`, в отличие от поля token.
+        read_only_fields = (<span class="hljs-string">'token'</span>,)
+
+
+    def update(self, <span class="hljs-keyword">instance</span>, validated_data):
+        <span class="hljs-string">""</span><span class="hljs-string">"Осуществляет обновление модели User."</span><span class="hljs-string">""</span>
+
+        # Для паролей не должен использоваться метод `setattr`, в отличие от других полей.
+        # Это связано с тем, что Django предоставляет функцию, которая осуществляет хэширование  
+        # и добавление солей к паролям, что важно для безопасности приложения. Это означает, что мы должны
+        # удалить поле password из словаря `validated_data`, прежде чем обработать данные, хранящиеся в нём.  
+        password = validated_data.pop(<span class="hljs-string">'password'</span>, None)
+
+        for (key, value) <span class="hljs-keyword">in</span> validated_data.items():
+            # Для ключей, оставшихся в `validated_data`, мы присвоим их значения атрибутам 
+            # текущего экземпляра `User`.
+            setattr(<span class="hljs-keyword">instance</span>, key, value)
+
+        <span class="hljs-keyword">if</span> password is not None:
+            # Метод `.set_password()` осуществляет все необходимые операции 
+            # для безопасного сохранения пароля, освобождая нас от необходимости заниматься этим.
+            <span class="hljs-keyword">instance</span>.set_password(password)
+
+        # После обновления всех полей, мы должны явно сохранить 
+        # модель. Стоит отметить, что метод `.set_password()` не сохраняет
+        # модель.
+        <span class="hljs-keyword">instance</span>.save()
+
+        return <span class="hljs-keyword">instance</span>
+</code></pre>
+<p>Стоит отметить, что мы не определяем явно метод <code>create</code> в сериализаторе, поскольку DRF предоставляет стандартный метод <code>create</code> для всех экземпляров <code>serializers.ModelSerializer</code>. Можно создать пользователя с помощью этого сериализатора, но мы хотим, чтобы создание пользователя осуществлялось с помощью <code>RegistrationSerializer</code>.</p>
+<h2 id="userretrieveupdateapiview">UserRetrieveUpdateAPIView</h2>
+<p>Откройте <code>conduit/apps/authentication/views.py</code> и обновите импорты следующим образом:</p>
+<pre><code class="lang-python"><span class="hljs-title">from</span> rest_framework <span class="hljs-keyword">import</span> status
++from rest_framework.generics <span class="hljs-keyword">import</span> RetrieveUpdateAPIView
+-from rest_framework.permissions <span class="hljs-keyword">import</span> AllowAny
++from rest_framework.permissions <span class="hljs-keyword">import</span> AllowAny, IsAuthenticated
+<span class="hljs-title">from</span> rest_framework.response <span class="hljs-keyword">import</span> Response
+<span class="hljs-title">from</span> rest_framework.views <span class="hljs-keyword">import</span> APIView
+
+<span class="hljs-title">from</span> .renderers <span class="hljs-keyword">import</span> UserJSONRenderer
+<span class="hljs-title">from</span> .serializers <span class="hljs-keyword">import</span> (
+-   <span class="hljs-type">LoginSerializer</span>, <span class="hljs-type">RegistraitonSerializer</span>
++    <span class="hljs-type">LoginSerializer</span>, <span class="hljs-type">RegistrationSerializer</span>, <span class="hljs-type">UserSerializer</span>,
+)
+</code></pre>
+<p>Ниже этих импортов создайте новое представление с названием <code>UserRetrieveUpdateAPIView</code>:</p>
+<pre><code class="lang-python"><span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">UserRetrieveUpdateAPIView</span>(<span class="hljs-title">RetrieveUpdateAPIView</span>):</span>
+    permission_classes = (IsAuthenticated,)
+    renderer_classes = (UserJSONRenderer,)
+    serializer_class = UserSerializer
+
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">retrieve</span><span class="hljs-params">(<span class="hljs-keyword">self</span>, request, *args, **kwargs)</span></span>:
+        <span class="hljs-comment"># В этом методе мы не хотим ничего проверять или сохранять.</span>
+        <span class="hljs-comment"># Вместо этого мы просто хотим, чтобы сериализатор преобразовал наш объект </span>
+        <span class="hljs-comment"># в JSON и послал клиенту.        </span>
+        serializer = <span class="hljs-keyword">self</span>.serializer_class(request.user)
+
+        <span class="hljs-keyword">return</span> Response(serializer.data, status=status.HTTP_200_OK)
+
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">update</span><span class="hljs-params">(<span class="hljs-keyword">self</span>, request, *args, **kwargs)</span></span>:
+        serializer_data = request.data.get(<span class="hljs-string">'user'</span>, {})
+
+        <span class="hljs-comment"># Вот где используется последовательность сериализации, </span>
+        <span class="hljs-comment"># проверки, сохранения, о которой мы говорили ранее.</span>
+        serializer = <span class="hljs-keyword">self</span>.serializer_class(
+            request.user, data=serializer_data, partial=True
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        <span class="hljs-keyword">return</span> Response(serializer.data, status=status.HTTP_200_OK)
+</code></pre>
+<p>Теперь перейдите в <code>conduit/apps/authentication/urls.py</code> и обновите импорты, добавив <code>UserRetrieveUpdateAPIView</code>:</p>
+<pre><code class="lang-python">-from .views <span class="hljs-keyword">import</span> LoginAPIView, RegistrationAPIView
++from .views <span class="hljs-keyword">import</span> (
++    <span class="hljs-type">LoginAPIView</span>, <span class="hljs-type">RegistrationAPIView</span>, <span class="hljs-type">UserRetrieveUpdateAPIView</span>
++)
+</code></pre>
+<p>И добавьте новый маршрут в <code>urlpatterns</code>:</p>
+<pre><code class="lang-python">urlpatterns = [
++    url(<span class="hljs-string">r'^user/?$'</span>, UserRetrieveUpdateAPIView.as_view()),
+    url(<span class="hljs-string">r'^users/?$'</span>, RegistrationAPIView.as_view()),
+    url(<span class="hljs-string">r'^users/login/?$'</span>, LoginAPIView.as_view()),
+]
+</code></pre>
+<p>Опять откройте Postman и отправьте запрос &quot;Current User&quot;. Вы увидите ошибку, которая выглядит следующим образом:</p>
+<pre><code class="lang-python">{
+  <span class="hljs-attr">"user"</span>: {
+    <span class="hljs-attr">"detail"</span>: <span class="hljs-string">"Authentication credentials were not provided."</span>
+  }
+}
+</code></pre>
+<h2 id="-">Аутентифицируем пользователей</h2>
+<p>В Django есть такое понятие как бекэнды для аутентификации. Не вдаваясь в подробности бекэнд - это по сути алгоритм, позволяющий определить аутентифицирован пользователь или нет. Нам нужно создать свой собственный, нестандартный бекэнд, поддерживающий JWT, поскольку по умолчанию они не поддерживаются ни Django, ни Django REST фреймворком (DRF).</p>
+<p>Создайте и откройте <code>conduit/apps/authentication/backends.py</code> и добавьте в него следующий код:</p>
+<pre><code class="lang-python"><span class="hljs-keyword">import</span> jwt
+
+<span class="hljs-keyword">from</span> django.conf <span class="hljs-keyword">import</span> settings
+
+<span class="hljs-keyword">from</span> rest_framework <span class="hljs-keyword">import</span> authentication, exceptions
+
+<span class="hljs-keyword">from</span> .models <span class="hljs-keyword">import</span> User
+
+
+<span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">JWTAuthentication</span><span class="hljs-params">(authentication.BaseAuthentication)</span>:</span>
+    authentication_header_prefix = <span class="hljs-string">'Token'</span>
+
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">authenticate</span><span class="hljs-params">(self, request)</span>:</span>
+        <span class="hljs-string">"""
+        Метод `authenticate` вызывается для каждого запроса независимо от того требует
+        ли конечная точка, чтобы пользователь был аутентифицирован.        
+
+        Метод `authenticate` может вернуть один из двух ответов:
+
+        1) `None` - Мы возвращаем `None`, если не хотим осуществлять аутентификацию. 
+                    Обычно это означает, что мы знаем, что аутентифицировать пользователя
+                    не удастся. Например, в заголовках запроса отсутствует токен.
+
+        2) `(user, token)` - Мы возвращаем комбинацию пользователь/токен, когда аутентификация 
+                             прошла успешно.
+
+                            Если ни один из случаев не выполняется - это означает, 
+                            что возникла ошибка и мы ничего не возвращаем.
+                            Мы просто генерируем исключение `AuthenticationFailed` 
+                            и позволяем Django REST фреймворку обработать его.                            
+        """</span>
+        request.user = <span class="hljs-keyword">None</span>
+
+        <span class="hljs-comment"># `auth_header` всегда должен быть массивом с двумя элементами: 1) названием </span>
+        <span class="hljs-comment"># заголовка аутентификации (в этом случае, "Token") и 2) JWT, который</span>
+        <span class="hljs-comment"># мы должны использовать для аутентификации.</span>
+        auth_header = authentication.get_authorization_header(request).split()
+        auth_header_prefix = self.authentication_header_prefix.lower()
+
+        <span class="hljs-keyword">if</span> <span class="hljs-keyword">not</span> auth_header:
+            <span class="hljs-keyword">return</span> <span class="hljs-keyword">None</span>
+
+        <span class="hljs-keyword">if</span> len(auth_header) == <span class="hljs-number">1</span>:
+            <span class="hljs-comment"># Неправильный заголовок токена. Учетные данные не были предоставлены. Даже не пытаемся </span>
+            <span class="hljs-comment"># осуществлять аутентификацию.</span>
+            <span class="hljs-keyword">return</span> <span class="hljs-keyword">None</span>
+
+        <span class="hljs-keyword">elif</span> len(auth_header) &gt; <span class="hljs-number">2</span>:
+            <span class="hljs-comment"># Неправильный заголовок токена. Строка Token не может содержать пробелы. Даже не пытаемся </span>
+            <span class="hljs-comment"># осуществлять аутентификацию.</span>
+            <span class="hljs-keyword">return</span> <span class="hljs-keyword">None</span>
+
+        <span class="hljs-comment"># Библиотека JWT, которую мы используем, не может работать с типом `byte`, который </span>
+        <span class="hljs-comment"># часто используется стандартными библиотеками в Python 3. Чтобы решить эту проблему,</span>
+        <span class="hljs-comment"># мы просто должны декодировать `prefix` и `token`. Это не делает код более чистым, но </span>
+        <span class="hljs-comment"># является хорошим решением, поскольку мы получим ошибку</span>
+        <span class="hljs-comment"># если не декодируем эти значения.</span>
+        prefix = auth_header[<span class="hljs-number">0</span>].decode(<span class="hljs-string">'utf-8'</span>)
+        token = auth_header[<span class="hljs-number">1</span>].decode(<span class="hljs-string">'utf-8'</span>)
+
+        <span class="hljs-keyword">if</span> prefix.lower() != auth_header_prefix:
+            <span class="hljs-comment"># Префикс заголовка аутентификации не такой как мы ожидали. Даже не пытаемся </span>
+            <span class="hljs-comment"># осуществлять аутентификацию.</span>
+            <span class="hljs-keyword">return</span> <span class="hljs-keyword">None</span>
+
+        <span class="hljs-comment"># Дойдя до этого места в коде, мы можем быть уверены, что существует ненулевая вероятность успешной </span>
+        <span class="hljs-comment"># аутентификации. Мы поручаем провести аутентификацию, используя предоставленные учетные данные,  </span>
+        <span class="hljs-comment"># методу, приведенному ниже.</span>
+        <span class="hljs-keyword">return</span> self._authenticate_credentials(request, token)
+
+    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">_authenticate_credentials</span><span class="hljs-params">(self, request, token)</span>:</span>
+        <span class="hljs-string">"""
+        Пытаемся осуществить аутентификацию, используя заданные учетные данные. Если аутентификация прошла успешно, 
+        возвращаем пользователя и токен. Если нет, то генерируем ошибку.
+        """</span>
+        <span class="hljs-keyword">try</span>:
+            payload = jwt.decode(token, settings.SECRET_KEY)
+        <span class="hljs-keyword">except</span>:
+            <span class="hljs-comment"># Ошибка при аутентификации. Невозможно декодировать токен.</span>
+            msg = <span class="hljs-string">'Invalid authentication. Could not decode token.'</span>
+            <span class="hljs-keyword">raise</span> exceptions.AuthenticationFailed(msg)
+
+        <span class="hljs-keyword">try</span>:
+            user = User.objects.get(pk=payload[<span class="hljs-string">'id'</span>])
+        <span class="hljs-keyword">except</span> User.DoesNotExist:
+            <span class="hljs-comment"># Не найдено ни одного пользователя, соответствующего этому токену.</span>
+            msg = <span class="hljs-string">'No user matching this token was found.'</span>
+            <span class="hljs-keyword">raise</span> exceptions.AuthenticationFailed(msg)
+
+        <span class="hljs-keyword">if</span> <span class="hljs-keyword">not</span> user.is_active:
+            <span class="hljs-comment"># Учетная запись этого пользователя была деактивирована.</span>
+            msg = <span class="hljs-string">'This user has been deactivated.'</span>
+            <span class="hljs-keyword">raise</span> exceptions.AuthenticationFailed(msg)
+
+        <span class="hljs-keyword">return</span> (user, token)
+</code></pre>
+<p>Этот файл содержит достаточно много логики и исключений, но сам код довольно простой. Всё, что мы сделали, это перечислили условия, при которых пользователь не будет аутентифицирован, и сгенерировали исключения, если какое-то из этих условий выполняется.</p>
+<p>Здесь мы не даём каких-либо дополнительных ссылок? с которыми следовало бы ознакомиться, но если Вас заинтересовала данная тема, Вы можете просмотреть документацию к библиотеке [PyJWT] (<a href="https://pyjwt.readthedocs.io/en/latest/">https://pyjwt.readthedocs.io/en/latest/</a>).</p>
+<h2 id="-drf-">Сообщаем DRF о нашем бекэнде для аутентификации</h2>
+<p>Мы должны явно указать Django REST фреймворку какой бекэнд для аутентификации мы хотим использовать, подобно тому, как мы указывали Django использовать свою собственную, нестандартную модель <code>User</code>.</p>
+<p>Откройте <code>conduit/settings.py</code> и добавьте в словарь <code>REST_FRAMEWORK</code> новый ключ:</p>
+<pre><code class="lang-python">REST_FRAMEWORK = {
+     [...]
++
++    '<span class="hljs-attribute">DEFAULT_AUTHENTICATION_CLASSES'</span>: (
++        'conduit<span class="hljs-variable">.apps</span><span class="hljs-variable">.authentication</span><span class="hljs-variable">.backends</span><span class="hljs-variable">.JWTAuthentication</span>',
++    ),
+}
+</code></pre>
+<h2 id="-postman">Осуществляем получение и обновление информации о пользователях с помощью Postman</h2>
+<p>Теперь, когда мы настроили наш новый бекэнд для аутентификации, ошибка аутентификации, которую мы видели ранее, должна пропасть. Проверьте это, открыв Postman и отправив ещё один запрос &quot;Current User&quot;. Запрос должен успешно осуществиться и Вы должны увидеть информацию о пользователе в ответе.</p>
+<p>Помните, что мы создали конечную точку для обновления данных вместе с конечной точкой для их получения. Давайте проверим её тоже. Пошлите запрос &quot;Update User&quot; из каталога &quot;Auth&quot; Postman. Если Вы не изменяли тело запроса, то электронная почта Вашего пользователя должна была измениться. Поэкспериментируйте с этими запросами, внося различные изменения в информацию о пользователе.</p>
+<h2 id="-">Переходим к более интересным темам</h2>
+<p>Вот и конец этой главы. Мы создали модель для пользователя и три сериализатора для неё (RegistrationSerializer, LoginSerializer и UserSerializer - прим. переводчика). Добавлены четыре конечные точки, которые позволяют пользователям регистрироваться, входить в систему, получать и обновлять их пользовательские данные. Довольно неплохое начало!</p>
+<p>В следующей главе мы создадим профили для наших пользователей. Вы наверное заметили, что модель <code>User</code> достаточно примитивная. Мы добавили в неё только то, что необходимо для аутентификации. Другая информация, например, биография и URL картинки с аватаром, войдет в модель <code>Profile</code>, которую мы создадим в следующей главе.</p>
